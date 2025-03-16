@@ -34,3 +34,4 @@ build/
 
 # Ignorar logs de errores de JVM
 hs_err_pid*.log
+replay_pid*.log
