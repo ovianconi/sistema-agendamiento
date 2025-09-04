@@ -4,6 +4,7 @@ import com.estetica.agendamiento.model.Cliente;
 import com.estetica.agendamiento.repository.ClienteRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.Sort;
 
 import java.util.List;
 import java.util.Optional;
@@ -14,8 +15,12 @@ public class ClienteService {
     @Autowired
     private ClienteRepository clienteRepository;
 
+    public ClienteService(ClienteRepository repo) {
+        this.clienteRepository = repo;
+    }
+
     public List<Cliente> listarClientes() {
-        return clienteRepository.findAll();
+        return clienteRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
     }
 
     public Optional<Cliente> obtenerCliente(Long id) {

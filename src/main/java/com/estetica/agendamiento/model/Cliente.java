@@ -1,6 +1,7 @@
 package com.estetica.agendamiento.model;
 
 import jakarta.persistence.*;
+import jakarta.validation.constraints.*;
 import lombok.*;
 
 @Entity
@@ -18,9 +19,16 @@ public class Cliente {
     @Column(nullable = false, length = 100)
     private String nombre;
 
+    @Column(nullable = false, length = 100)
+    private String apellido;
+
     @Column(nullable = false, unique = true, length = 15)
     private String documento;
 
     @Column(nullable = false, length = 50)
     private String telefono;
+
+    @Email(message = "Correo electrónico no válido")
+    @Column(nullable = true, length = 100)
+    private String correo;
 }

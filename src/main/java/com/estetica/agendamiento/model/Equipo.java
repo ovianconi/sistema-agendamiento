@@ -2,7 +2,6 @@ package com.estetica.agendamiento.model;
 
 import jakarta.persistence.*;
 import lombok.*;
-import java.util.List;
 
 @Entity
 @Table(name = "equipos")
@@ -16,9 +15,11 @@ public class Equipo {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true)
+    // Ejemplo: "Equipo Facial"
+    @Column(nullable = false)
     private String nombre;
 
-    @ManyToMany(mappedBy = "equipos")
-    private List<Tratamiento> tratamientos;
+    // Ejemplo: "EF1", "EF2", "EF3"
+    @Column(nullable = false, unique = true)
+    private String codigo;
 }

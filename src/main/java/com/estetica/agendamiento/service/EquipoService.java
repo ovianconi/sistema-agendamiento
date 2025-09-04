@@ -2,31 +2,40 @@ package com.estetica.agendamiento.service;
 
 import com.estetica.agendamiento.model.Equipo;
 import com.estetica.agendamiento.repository.EquipoRepository;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
 
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
 import java.util.List;
-import java.util.Optional;
 
 @Service
 public class EquipoService {
 
-    @Autowired
-    private EquipoRepository equipoRepository;
+    private final EquipoRepository equipoRepository;
 
-    public List<Equipo> listarEquipos() {
-        return equipoRepository.findAll();
+    public EquipoService(EquipoRepository equipoRepository) {
+        this.equipoRepository = equipoRepository;
     }
 
-    public Optional<Equipo> obtenerEquipo(Long id) {
-        return equipoRepository.findById(id);
+    public List<Equipo> findAll() {
+        return equipoRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
     }
 
-    public Equipo guardarEquipo(Equipo equipo) {
+    public Equipo findById(Long id) {
+        return equipoRepository.findById(id).orElseThrow(() -> new RuntimeException("Equipo no encontrado"));
+    }
+
+    public Equipo save(Equipo equipo) {
         return equipoRepository.save(equipo);
     }
 
-    public void eliminarEquipo(Long id) {
+    public Equipo update(Long id, Equipo equipo) {
+        Equipo existente = findById(id);
+        existente.setNombre(equipo.getNombre());
+        existente.setCodigo(equipo.getCodigo());
+        return equipoRepository.save(existente);
+    }
+
+    public void delete(Long id) {
         equipoRepository.deleteById(id);
     }
 }

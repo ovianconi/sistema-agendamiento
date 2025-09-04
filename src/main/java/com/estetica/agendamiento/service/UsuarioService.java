@@ -1,33 +1,64 @@
 package com.estetica.agendamiento.service;
 
+import com.estetica.agendamiento.model.Rol;
 import com.estetica.agendamiento.model.Usuario;
+import com.estetica.agendamiento.repository.RolRepository;
 import com.estetica.agendamiento.repository.UsuarioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 @Service
-public class UsuarioService implements UserDetailsService {
+public class UsuarioService {
 
     @Autowired
     private UsuarioRepository usuarioRepository;
 
-    @Override
-    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        Usuario usuario = usuarioRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("Usuario no encontrado"));
+    @Autowired
+    private RolRepository rolRepository;
 
-        return User.withUsername(usuario.getUsername())
-                .password(usuario.getPassword())
-                .roles(usuario.getRoles().stream()
-                        .map(rol -> rol.getNombre().replace("ROLE_", ""))
-                        .collect(Collectors.toList())
-                        .toArray(new String[0]))
-                .build();
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    public List<Usuario> findAll() {
+        return usuarioRepository.findAll();
+    }
+
+    public Usuario createUsuario(String username, String password, Long rolId) {
+        Rol rol = rolRepository.findById(rolId)
+                .orElseThrow(() -> new RuntimeException("Rol no encontrado"));
+
+        Usuario usuario = new Usuario();
+        usuario.setUsername(username);
+        usuario.setPassword(passwordEncoder.encode(password));
+        usuario.setRoles(Collections.singletonList(rol));
+
+        return usuarioRepository.save(usuario);
+    }
+
+    public Usuario updateUsuario(Long id, String username, String password, Long rolId) {
+        Usuario usuario = usuarioRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+        usuario.setUsername(username);
+        if (password != null && !password.isBlank()) {
+            usuario.setPassword(passwordEncoder.encode(password));
+        }
+
+        if (rolId != null) {
+            Rol rol = rolRepository.findById(rolId)
+                    .orElseThrow(() -> new RuntimeException("Rol no encontrado"));
+            usuario.setRoles(new ArrayList<>(Collections.singletonList(rol))); // ✅ Aquí el fix
+        }
+
+        return usuarioRepository.save(usuario);
+    }
+
+    public void deleteUsuario(Long id) {
+        usuarioRepository.deleteById(id);
     }
 }

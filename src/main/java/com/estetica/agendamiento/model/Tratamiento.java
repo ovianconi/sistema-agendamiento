@@ -2,7 +2,6 @@ package com.estetica.agendamiento.model;
 
 import jakarta.persistence.*;
 import lombok.*;
-import java.util.List;
 
 @Entity
 @Table(name = "tratamientos")
@@ -19,17 +18,8 @@ public class Tratamiento {
     @Column(nullable = false, unique = true)
     private String nombre;
 
-    @ManyToMany(mappedBy = "tratamientos")
-    private List<Paquete> paquetes;
-
-    @ManyToMany(mappedBy = "tratamientos")
-    private List<Personal> personal;
-
-    @ManyToMany
-    @JoinTable(
-        name = "tratamiento_equipos",
-        joinColumns = @JoinColumn(name = "tratamiento_id"),
-        inverseJoinColumns = @JoinColumn(name = "equipo_id")
-    )
-    private List<Equipo> equipos;
+    // Relación opcional con equipo
+    @ManyToOne
+    @JoinColumn(name = "equipo_id", nullable = true) // ahora puede ser null
+    private Equipo equipo;
 }

@@ -2,7 +2,11 @@ package com.estetica.agendamiento.controller;
 
 import com.estetica.agendamiento.service.AuthService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+
 import com.estetica.agendamiento.model.Rol;
 import com.estetica.agendamiento.model.Usuario;
 import com.estetica.agendamiento.repository.RolRepository;
@@ -19,7 +23,7 @@ public class AuthController {
     @Autowired
     private AuthService authService;
 
-	@Autowired
+    @Autowired
     private UsuarioRepository usuarioRepository;
 
     @Autowired
@@ -29,14 +33,10 @@ public class AuthController {
     private PasswordEncoder passwordEncoder;
 
     @PostMapping("/register")
-    public Map<String, String> register(@RequestBody Map<String, String> userData) {
-        String username = userData.get("username");
-        String password = userData.get("password");
-        String role = userData.get("role");
-
-        if (usuarioRepository.findByUsername(username).isPresent()) {
-            return Map.of("error", "El usuario ya existe");
-        }
+    public ResponseEntity<Usuario> register(@RequestBody Map<String, String> body) {
+        String username = body.get("username");
+        String password = body.get("password");
+        String role = body.getOrDefault("role", "USER");
 
         Rol userRole = rolRepository.findByNombre("ROLE_" + role.toUpperCase())
                 .orElseThrow(() -> new RuntimeException("Rol no encontrado"));
@@ -44,16 +44,20 @@ public class AuthController {
         Usuario usuario = new Usuario();
         usuario.setUsername(username);
         usuario.setPassword(passwordEncoder.encode(password));
-        usuario.setRoles(Collections.singleton(userRole));
+        usuario.setRoles(Collections.singletonList(userRole));
 
-        usuarioRepository.save(usuario);
-
-        return Map.of("message", "Usuario registrado con éxito");
+        Usuario saved = usuarioRepository.save(usuario);
+        return ResponseEntity.ok(saved);
     }
 
     @PostMapping("/login")
     public Map<String, String> login(@RequestBody Map<String, String> credentials) {
         String token = authService.authenticate(credentials.get("username"), credentials.get("password"));
-        return token != null ? Map.of("token", token) : Map.of("error", "Credenciales inválidas");
+
+        if (token != null) {
+            return Map.of("token", token);
+        } else {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Credenciales inválidas");
+        }
     }
 }

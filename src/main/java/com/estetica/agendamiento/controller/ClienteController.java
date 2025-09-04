@@ -30,6 +30,12 @@ public class ClienteController {
         return clienteService.guardarCliente(cliente);
     }
 
+    @PutMapping("/{id}")
+    public Cliente update(@PathVariable Long id, @RequestBody Cliente cliente) {
+        cliente.setId(id);
+        return clienteService.guardarCliente(cliente);
+    }
+
     @DeleteMapping("/{id}")
     public void eliminarCliente(@PathVariable Long id) {
         clienteService.eliminarCliente(id);
