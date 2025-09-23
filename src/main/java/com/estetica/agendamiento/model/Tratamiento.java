@@ -1,7 +1,11 @@
 package com.estetica.agendamiento.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
+
+import java.util.List;
 
 @Entity
 @Table(name = "tratamientos")
@@ -9,6 +13,7 @@ import lombok.*;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Tratamiento {
 
     @Id
@@ -18,8 +23,14 @@ public class Tratamiento {
     @Column(nullable = false, unique = true)
     private String nombre;
 
-    // Relación opcional con equipo
-    @ManyToOne
-    @JoinColumn(name = "equipo_id", nullable = true) // ahora puede ser null
-    private Equipo equipo;
+    private String descripcion;
+
+    // Relación con equipos
+    @ManyToMany(mappedBy = "tratamientos")
+    @JsonIgnore // 🔹 evita recursión infinita al serializar
+    private List<Equipo> equipos;
+
+    @ManyToMany(mappedBy = "tratamientos")
+    @JsonIgnore // 🔹 evita recursión infinita al serializar
+    private List<Personal> personales;
 }

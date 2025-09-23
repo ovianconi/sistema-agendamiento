@@ -6,4 +6,6 @@ import java.util.Optional;
 
 public interface EquipoRepository extends JpaRepository<Equipo, Long> {
     Optional<Equipo> findByCodigo(String codigo);
+
+    Optional<Equipo> findByNombre(String nombre);
 }

@@ -2,36 +2,38 @@ package com.estetica.agendamiento.controller;
 
 import com.estetica.agendamiento.model.Personal;
 import com.estetica.agendamiento.service.PersonalService;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-import java.util.Optional;
-
 @RestController
-@RequestMapping("/api/personal")
+@RequestMapping("/api/personales")
+@RequiredArgsConstructor
 public class PersonalController {
 
-    @Autowired
-    private PersonalService personalService;
+    private final PersonalService personalService;
 
     @GetMapping
-    public List<Personal> listarPersonal() {
-        return personalService.listarPersonal();
-    }
-
-    @GetMapping("/{id}")
-    public Optional<Personal> obtenerPersonal(@PathVariable Long id) {
-        return personalService.obtenerPersonal(id);
+    public Page<Personal> getAll(@PageableDefault(size = 5, sort = "id") Pageable pageable) {
+        return personalService.findAll(pageable);
     }
 
     @PostMapping
-    public Personal crearPersonal(@RequestBody Personal personal) {
-        return personalService.guardarPersonal(personal);
+    public ResponseEntity<Personal> create(@RequestBody Personal personal) {
+        return ResponseEntity.ok(personalService.save(personal));
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<Personal> update(@PathVariable Long id, @RequestBody Personal personal) {
+        return ResponseEntity.ok(personalService.update(id, personal));
     }
 
     @DeleteMapping("/{id}")
-    public void eliminarPersonal(@PathVariable Long id) {
-        personalService.eliminarPersonal(id);
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        personalService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 }

@@ -5,6 +5,7 @@ import com.estetica.agendamiento.model.Usuario;
 import com.estetica.agendamiento.repository.RolRepository;
 import com.estetica.agendamiento.repository.UsuarioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -25,7 +26,7 @@ public class UsuarioService {
     private PasswordEncoder passwordEncoder;
 
     public List<Usuario> findAll() {
-        return usuarioRepository.findAll();
+        return usuarioRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
     }
 
     public Usuario createUsuario(String username, String password, Long rolId) {

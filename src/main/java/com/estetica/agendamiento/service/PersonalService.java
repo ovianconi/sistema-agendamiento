@@ -2,31 +2,41 @@ package com.estetica.agendamiento.service;
 
 import com.estetica.agendamiento.model.Personal;
 import com.estetica.agendamiento.repository.PersonalRepository;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.Optional;
-
 @Service
+@RequiredArgsConstructor
 public class PersonalService {
 
-    @Autowired
-    private PersonalRepository personalRepository;
+    private final PersonalRepository personalRepository;
 
-    public List<Personal> listarPersonal() {
-        return personalRepository.findAll();
+    public Page<Personal> findAll(Pageable pageable) {
+        return personalRepository.findAll(pageable);
     }
 
-    public Optional<Personal> obtenerPersonal(Long id) {
-        return personalRepository.findById(id);
-    }
-
-    public Personal guardarPersonal(Personal personal) {
+    public Personal save(Personal personal) {
         return personalRepository.save(personal);
     }
 
-    public void eliminarPersonal(Long id) {
+    public Personal update(Long id, Personal personal) {
+        Personal existente = personalRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Personal no encontrado"));
+        existente.setNombre(personal.getNombre());
+        existente.setApellido(personal.getApellido());
+        existente.setCorreo(personal.getCorreo());
+        existente.setTelefono(personal.getTelefono());
+        existente.setTratamientos(personal.getTratamientos()); // actualizar relaciones
+        return personalRepository.save(existente);
+    }
+
+    public void delete(Long id) {
         personalRepository.deleteById(id);
+    }
+
+    public Personal findById(Long id) {
+        return personalRepository.findById(id).orElse(null);
     }
 }

@@ -39,26 +39,31 @@ public class SecurityConfig {
     }
 
     @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration config)
+            throws Exception {
         return config.getAuthenticationManager();
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtFilter jwtFilter) throws Exception {
-        http.csrf().disable()
-                .cors().and()
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**").permitAll() // Permitir login sin autenticación
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtFilter jwtFilter)
+            throws Exception {
+        http.csrf().disable().cors().and()
+                .authorizeHttpRequests(auth -> auth.requestMatchers("/api/auth/**").permitAll() // Permitir
+                                                                                                // login
+                                                                                                // sin
+                                                                                                // autenticación
                         .requestMatchers("/api/usuarios/**").hasAnyRole("ADMIN") // Solo ADMIN
                         .requestMatchers("/api/roles/**").hasAnyRole("ADMIN") // Solo ADMIN
                         .requestMatchers("/api/configuracion/**").hasAnyRole("ADMIN") // Solo ADMIN
-                        .requestMatchers("/api/clientes/**").hasAnyRole("ADMIN", "USER") // ADMIN y Usuario pueden ver
-                        .requestMatchers("/api/equipos/**").hasAnyRole("ADMIN", "USER") // ADMIN y Usuario pueden ver
-                        .requestMatchers("/api/tratamientos/**").hasAnyRole("ADMIN", "USER") // ADMIN y Usuario pueden
-                                                                                             // ver
-                        // citas
+                        .requestMatchers("/api/clientes/**").hasAnyRole("ADMIN", "USER") // ADMIN-Usuario
+                        .requestMatchers("/api/equipos/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/api/tratamientos/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/api/personales/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/api/asignaciones/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/api/paquetes/**").hasAnyRole("ADMIN", "USER")
                         .anyRequest().authenticated())
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .sessionManagement(
+                        session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

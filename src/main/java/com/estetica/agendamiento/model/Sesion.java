@@ -5,12 +5,12 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "citas")
+@Table(name = "sesiones")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-public class Cita {
+public class Sesion {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -21,7 +21,7 @@ public class Cita {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private EstadoCita estado;
+    private EstadoSesion estado;
 
     @ManyToOne
     @JoinColumn(name = "cliente_id", nullable = false)
@@ -39,7 +39,7 @@ public class Cita {
     @JoinColumn(name = "equipo_id")
     private Equipo equipo;
 
-    public enum EstadoCita {
+    public enum EstadoSesion {
         PENDIENTE, CONFIRMADA, CANCELADA, COMPLETADA
     }
 }

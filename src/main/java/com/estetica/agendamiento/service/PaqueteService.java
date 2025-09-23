@@ -1,32 +1,85 @@
 package com.estetica.agendamiento.service;
 
-import com.estetica.agendamiento.model.Paquete;
-import com.estetica.agendamiento.repository.PaqueteRepository;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.estetica.agendamiento.model.*;
+import com.estetica.agendamiento.repository.*;
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 @Service
+@RequiredArgsConstructor
 public class PaqueteService {
 
-    @Autowired
-    private PaqueteRepository paqueteRepository;
+    private final PaqueteRepository paqueteRepository;
+    private final TratamientoRepository tratamientoRepository;
+    private final PaqueteTratamientoRepository paqueteTratamientoRepository;
 
-    public List<Paquete> listarPaquetes() {
-        return paqueteRepository.findAll();
+    public List<Paquete> findAll() {
+        return paqueteRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
     }
 
-    public Optional<Paquete> obtenerPaquete(Long id) {
+    public Optional<Paquete> findById(Long id) {
         return paqueteRepository.findById(id);
     }
 
-    public Paquete guardarPaquete(Paquete paquete) {
-        return paqueteRepository.save(paquete);
+    @Transactional
+    public Paquete create(String nombre, List<ItemReq> items) {
+        Paquete p = Paquete.builder().nombre(nombre).build();
+        p.setItems(new LinkedHashSet<>());
+        Paquete saved = paqueteRepository.save(p);
+
+        if (items != null) {
+            for (ItemReq it : items) {
+                Tratamiento t = tratamientoRepository.findById(it.tratamientoId())
+                        .orElseThrow(() -> new RuntimeException("Tratamiento no encontrado: " + it.tratamientoId()));
+                PaqueteTratamiento pt = PaqueteTratamiento.builder()
+                        .paquete(saved)
+                        .tratamiento(t)
+                        .sesiones(it.sesiones())
+                        .build();
+                paqueteTratamientoRepository.save(pt);
+                saved.getItems().add(pt);
+            }
+        }
+        return saved;
     }
 
-    public void eliminarPaquete(Long id) {
+    @Transactional
+    public Paquete update(Long id, String nombre, List<ItemReq> items) {
+        Paquete p = paqueteRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Paquete no encontrado"));
+
+        p.setNombre(nombre);
+
+        // limpiar items previos (orphanRemoval = true en Paquete)
+        p.getItems().clear();
+        paqueteRepository.save(p);
+
+        if (items != null) {
+            for (ItemReq it : items) {
+                Tratamiento t = tratamientoRepository.findById(it.tratamientoId())
+                        .orElseThrow(() -> new RuntimeException("Tratamiento no encontrado: " + it.tratamientoId()));
+                PaqueteTratamiento pt = PaqueteTratamiento.builder()
+                        .paquete(p)
+                        .tratamiento(t)
+                        .sesiones(it.sesiones())
+                        .build();
+                paqueteTratamientoRepository.save(pt);
+                p.getItems().add(pt);
+            }
+        }
+        return p;
+    }
+
+    public void delete(Long id) {
         paqueteRepository.deleteById(id);
+    }
+
+    // ===== Modelos de request ligeros (DTOs in-file) =====
+    public record ItemReq(Long tratamientoId, Integer sesiones) {
     }
 }

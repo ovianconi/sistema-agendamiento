@@ -2,8 +2,9 @@ package com.estetica.agendamiento.model;
 
 import jakarta.persistence.*;
 import lombok.*;
-import java.time.LocalDate;
-import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 @Entity
 @Table(name = "paquetes")
@@ -11,33 +12,19 @@ import java.util.List;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Paquete {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true)
     private String nombre;
 
-    @Column(nullable = false)
-    private int sesionesDisponibles;
-
-    @Column(nullable = false)
-    private LocalDate fechaCompra;
-
-    @Column(nullable = false)
-    private LocalDate fechaVencimiento;
-
-    @ManyToOne
-    @JoinColumn(name = "cliente_id", nullable = false)
-    private Cliente cliente;
-
-    @ManyToMany
-    @JoinTable(
-        name = "paquete_tratamientos",
-        joinColumns = @JoinColumn(name = "paquete_id"),
-        inverseJoinColumns = @JoinColumn(name = "tratamiento_id")
-    )
-    private List<Tratamiento> tratamientos;
+    // Relación con entidad de unión
+    @OneToMany(mappedBy = "paquete", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnoreProperties("paquete")
+    private Set<PaqueteTratamiento> items = new LinkedHashSet<>();
 }

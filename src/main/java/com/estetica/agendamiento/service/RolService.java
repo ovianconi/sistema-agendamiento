@@ -2,6 +2,8 @@ package com.estetica.agendamiento.service;
 
 import com.estetica.agendamiento.model.Rol;
 import com.estetica.agendamiento.repository.RolRepository;
+
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -15,7 +17,7 @@ public class RolService {
     }
 
     public List<Rol> findAll() {
-        return rolRepository.findAll();
+        return rolRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
     }
 
     public Rol findById(Long id) {
