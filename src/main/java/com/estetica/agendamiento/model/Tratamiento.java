@@ -25,6 +25,9 @@ public class Tratamiento {
 
     private String descripcion;
 
+    @Column(nullable = false)
+    private boolean requiereEquipo;
+
     // Relación con equipos
     @ManyToMany(mappedBy = "tratamientos")
     @JsonIgnore // 🔹 evita recursión infinita al serializar

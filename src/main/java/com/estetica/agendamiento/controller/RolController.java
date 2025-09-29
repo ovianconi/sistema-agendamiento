@@ -1,7 +1,9 @@
 package com.estetica.agendamiento.controller;
 
 import com.estetica.agendamiento.model.Rol;
+import com.estetica.agendamiento.model.Vista;
 import com.estetica.agendamiento.service.RolService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -39,4 +41,18 @@ public class RolController {
     public void delete(@PathVariable Long id) {
         rolService.delete(id);
     }
+
+    // 🔑 Endpoint para devolver las vistas asociadas a un rol
+    @GetMapping("/{rolId}/vistas")
+    public List<Vista> getVistasByRol(@PathVariable Long rolId) {
+        return rolService.obtenerVistasPorRol(rolId);
+    }
+
+    @PostMapping("/{rolId}/vistas")
+    public ResponseEntity<Void> asignarVistas(@PathVariable Long rolId,
+            @RequestBody List<Long> vistaIds) {
+        rolService.asignarVistas(rolId, vistaIds);
+        return ResponseEntity.noContent().build();
+    }
+
 }

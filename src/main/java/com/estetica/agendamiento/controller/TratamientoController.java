@@ -22,8 +22,7 @@ public class TratamientoController {
 
     @GetMapping("/{id}")
     public ResponseEntity<Tratamiento> getTratamientoById(@PathVariable Long id) {
-        return tratamientoService.findById(id)
-                .map(ResponseEntity::ok)
+        return tratamientoService.findById(id).map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
@@ -33,7 +32,8 @@ public class TratamientoController {
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Tratamiento> updateTratamiento(@PathVariable Long id, @RequestBody Tratamiento tratamiento) {
+    public ResponseEntity<Tratamiento> updateTratamiento(@PathVariable Long id,
+            @RequestBody Tratamiento tratamiento) {
         return tratamientoService.findById(id).map(existing -> {
             tratamiento.setId(id);
             return ResponseEntity.ok(tratamientoService.save(tratamiento));

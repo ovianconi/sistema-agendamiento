@@ -3,7 +3,6 @@ package com.estetica.agendamiento.controller;
 import com.estetica.agendamiento.model.ClientePaquete;
 import com.estetica.agendamiento.service.ClientePaqueteService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 

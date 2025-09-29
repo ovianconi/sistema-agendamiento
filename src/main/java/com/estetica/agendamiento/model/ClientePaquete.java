@@ -22,20 +22,25 @@ public class ClientePaquete {
 
     @ManyToOne(optional = false)
     @JoinColumn(name = "cliente_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+    // 🔑 Evita que serialice propiedades proxy de Cliente
     private Cliente cliente;
 
     @ManyToOne(optional = false)
     @JoinColumn(name = "paquete_id")
+    @JsonIgnoreProperties({"items"})
+    // 🔑 Evita que Paquete devuelva otra vez todos sus items y reentre en el loop
     private Paquete paquete;
 
     @Column(nullable = false)
     private LocalDate fechaCompra;
 
     @Column(nullable = false)
-    private LocalDate fechaValidez; // fechaCompra + meses
+    private LocalDate fechaValidez;
 
-    // Aquí se guardarán las sesiones restantes por tratamiento
     @OneToMany(mappedBy = "clientePaquete", cascade = CascadeType.ALL, orphanRemoval = true,
             fetch = FetchType.EAGER)
+    @JsonIgnoreProperties({"clientePaquete"})
+    // 🔑 Evita que ClientePaqueteTratamiento serialice de nuevo a su padre
     private List<ClientePaqueteTratamiento> tratamientos;
 }
