@@ -23,9 +23,7 @@ public class PaqueteController {
 
     @GetMapping("/{id}")
     public ResponseEntity<PaqueteResp> get(@PathVariable Long id) {
-        return paqueteService.findById(id)
-                .map(PaqueteController::toResp)
-                .map(ResponseEntity::ok)
+        return paqueteService.findById(id).map(PaqueteController::toResp).map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
@@ -34,13 +32,13 @@ public class PaqueteController {
         if (req.nombre() == null || req.nombre().isBlank()) {
             return ResponseEntity.badRequest().build();
         }
-        var created = paqueteService.create(req.nombre(), req.items());
+        var created = paqueteService.create(req.nombre(), req.duracion(), req.items());
         return ResponseEntity.ok(toResp(created));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<PaqueteResp> update(@PathVariable Long id, @RequestBody PaqueteReq req) {
-        var updated = paqueteService.update(id, req.nombre(), req.items());
+        var updated = paqueteService.update(id, req.nombre(), req.duracion(), req.items());
         return ResponseEntity.ok(toResp(updated));
     }
 
@@ -51,7 +49,8 @@ public class PaqueteController {
     }
 
     // ===== Requests / Responses =====
-    public record PaqueteReq(String nombre, List<com.estetica.agendamiento.service.PaqueteService.ItemReq> items) {
+    public record PaqueteReq(String nombre, Integer duracion,
+            List<com.estetica.agendamiento.service.PaqueteService.ItemReq> items) {
     }
 
     @Getter
@@ -62,6 +61,7 @@ public class PaqueteController {
     public static class PaqueteResp {
         private Long id;
         private String nombre;
+        private Integer duracion;
         private List<ItemResp> items;
     }
 
@@ -77,16 +77,13 @@ public class PaqueteController {
     }
 
     private static PaqueteResp toResp(Paquete p) {
-        List<ItemResp> items = p.getItems().stream().map(pt -> ItemResp.builder()
-                .tratamientoId(pt.getTratamiento().getId())
-                .tratamientoNombre(pt.getTratamiento().getNombre())
-                .sesiones(pt.getSesiones())
-                .build()).toList();
+        List<ItemResp> items = p.getItems().stream()
+                .map(pt -> ItemResp.builder().tratamientoId(pt.getTratamiento().getId())
+                        .tratamientoNombre(pt.getTratamiento().getNombre())
+                        .sesiones(pt.getSesiones()).build())
+                .toList();
 
-        return PaqueteResp.builder()
-                .id(p.getId())
-                .nombre(p.getNombre())
-                .items(items)
-                .build();
+        return PaqueteResp.builder().id(p.getId()).nombre(p.getNombre()).duracion(p.getDuracion())
+                .items(items).build();
     }
 }

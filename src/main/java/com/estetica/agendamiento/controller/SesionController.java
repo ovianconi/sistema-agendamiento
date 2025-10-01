@@ -35,4 +35,10 @@ public class SesionController {
     public ResponseEntity<Sesion> cancelarSesion(@PathVariable Long id) {
         return ResponseEntity.ok(sesionService.cancelarSesion(id));
     }
+
+    @PutMapping("/{id}/usar")
+    public ResponseEntity<Sesion> marcarComoUsada(@PathVariable Long id) {
+        return ResponseEntity.ok(sesionService.marcarComoUsada(id));
+    }
+
 }

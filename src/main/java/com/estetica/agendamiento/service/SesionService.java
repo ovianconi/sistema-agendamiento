@@ -166,4 +166,40 @@ public class SesionService {
 
                 return sesionRepository.save(sesion);
         }
+
+        @Transactional
+        public Sesion marcarComoUsada(Long sesionId) {
+                Sesion sesion = sesionRepository.findById(sesionId)
+                                .orElseThrow(() -> new RuntimeException("Sesión no encontrada"));
+
+                if (sesion.getEstado() == Sesion.EstadoSesion.CANCELADA) {
+                        throw new RuntimeException("No se puede usar una sesión cancelada");
+                }
+                if (sesion.getEstado() == Sesion.EstadoSesion.USADA) {
+                        throw new RuntimeException("La sesión ya fue marcada como usada");
+                }
+
+                if (sesion.getEstado() == Sesion.EstadoSesion.PERDIDA) {
+                        throw new RuntimeException("La sesión ya fue marcada como perdida");
+                }
+
+                // 🔑 Cambiar estado
+                sesion.setEstado(Sesion.EstadoSesion.USADA);
+
+                // 🔑 Registrar el uso en ClientePaqueteTratamiento
+                sesion.getClientePaquete().getTratamientos().stream()
+                                .filter(t -> t.getTratamiento().equals(sesion.getTratamiento()))
+                                .findFirst().ifPresent(ClientePaqueteTratamiento::marcarUsada);
+
+                // 🔑 Si el paquete aún no tiene fechaInicio, inicializamos validez
+                ClientePaquete cp = sesion.getClientePaquete();
+                if (cp.getFechaInicio() == null) {
+                        cp.setFechaInicio(LocalDate.now());
+                        cp.setFechaValidez(cp.getFechaInicio()
+                                        .plusMonths(cp.getPaquete().getDuracion()));
+                }
+
+                return sesionRepository.save(sesion);
+        }
+
 }

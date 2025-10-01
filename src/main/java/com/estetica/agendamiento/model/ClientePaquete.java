@@ -35,8 +35,12 @@ public class ClientePaquete {
     @Column(nullable = false)
     private LocalDate fechaCompra;
 
-    @Column(nullable = false)
+    @Column
     private LocalDate fechaValidez;
+
+    @Column
+    private LocalDate fechaInicio; // se setea en el primer uso
+
 
     @OneToMany(mappedBy = "clientePaquete", cascade = CascadeType.ALL, orphanRemoval = true,
             fetch = FetchType.EAGER)
