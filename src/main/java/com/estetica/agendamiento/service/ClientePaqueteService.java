@@ -7,6 +7,7 @@ import com.estetica.agendamiento.model.Paquete;
 import com.estetica.agendamiento.repository.ClientePaqueteRepository;
 import com.estetica.agendamiento.repository.ClienteRepository;
 import com.estetica.agendamiento.repository.PaqueteRepository;
+import com.estetica.agendamiento.repository.SesionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,8 +19,24 @@ import java.util.List;
 public class ClientePaqueteService {
 
     private final ClientePaqueteRepository clientePaqueteRepository;
+    private final SesionRepository sesionRepository;
     private final ClienteRepository clienteRepository;
     private final PaqueteRepository paqueteRepository;
+
+    @Transactional
+    public void eliminarAsignacion(Long id) {
+        ClientePaquete cp = clientePaqueteRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Asignación no encontrada"));
+
+        // Verificar si existen sesiones asociadas a este cliente_paquete
+        boolean tieneSesiones = sesionRepository.existsByClientePaquete_Id(id);
+        if (tieneSesiones) {
+            throw new RuntimeException(
+                    "No se puede eliminar la asignación, ya tiene sesiones registradas");
+        }
+
+        clientePaqueteRepository.delete(cp);
+    }
 
     public List<ClientePaquete> listar() {
         return clientePaqueteRepository.findAll();

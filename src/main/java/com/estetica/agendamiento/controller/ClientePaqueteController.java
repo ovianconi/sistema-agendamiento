@@ -34,8 +34,9 @@ public class ClientePaqueteController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> eliminar(@PathVariable Long id) {
-        clientePaqueteService.eliminar(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<?> eliminar(@PathVariable Long id) {
+        clientePaqueteService.eliminarAsignacion(id);
+        return ResponseEntity.ok().build();
     }
+
 }

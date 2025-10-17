@@ -30,4 +30,21 @@ public class TratamientoService {
     public void delete(Long id) {
         tratamientoRepository.deleteById(id);
     }
+
+    /**
+     * Devuelve el ID del tratamiento que mejor matchee con "nombre" (case-insensitive). Estrategia:
+     * - Exacto (ignore-case) - Empieza con ... - Contiene ... Si no encuentra nada, retorna null.
+     */
+    public Long buscarIdPorNombre(String nombre) {
+        if (nombre == null || nombre.isBlank()) {
+            return null;
+        }
+
+        return tratamientoRepository.findByNombreIgnoreCase(nombre).map(Tratamiento::getId)
+                .or(() -> tratamientoRepository.findFirstByNombreStartingWithIgnoreCase(nombre)
+                        .map(Tratamiento::getId))
+                .or(() -> tratamientoRepository.findFirstByNombreContainingIgnoreCase(nombre)
+                        .map(Tratamiento::getId))
+                .orElse(null);
+    }
 }

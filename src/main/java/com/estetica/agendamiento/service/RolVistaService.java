@@ -39,3 +39,4 @@ public class RolVistaService {
         return rolVistaRepository.findByVistaId(vistaId);
     }
 }
+

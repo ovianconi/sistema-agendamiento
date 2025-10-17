@@ -29,4 +29,10 @@ public interface PersonalRepository extends JpaRepository<Personal, Long> {
             """)
     List<Personal> findPersonalDisponibleParaTratamiento(Long tratamientoId, LocalDate fecha,
             LocalTime horaInicio, LocalTime horaFin);
+
+    // Listar todo el personal que puede realizar un tratamiento
+    List<Personal> findByTratamientos_Id(Long tratamientoId);
+
+    // Saber si un personal específico está habilitado para ese tratamiento
+    boolean existsByIdAndTratamientos_Id(Long personalId, Long tratamientoId);
 }

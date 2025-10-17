@@ -33,4 +33,10 @@ public interface EquipoRepository extends JpaRepository<Equipo, Long> {
     Optional<Equipo> findByCodigo(String codigo);
 
     Optional<Equipo> findByNombre(String nombre);
+
+    // Listar equipos que sirven para un tratamiento
+    List<Equipo> findByTratamientos_Id(Long tratamientoId);
+
+    // Validar si un equipo específico sirve para ese tratamiento
+    boolean existsByIdAndTratamientos_Id(Long equipoId, Long tratamientoId);
 }

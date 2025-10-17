@@ -54,15 +54,28 @@ public class SecurityConfig {
         http.csrf(csrf -> csrf.disable()).cors(cors -> cors.configurationSource(request -> {
             CorsConfiguration config = new CorsConfiguration();
             config.setAllowCredentials(true);
-            config.setAllowedOrigins(List.of("http://localhost:5173")); // Ajustar para prod
+            config.setAllowedOriginPatterns(List.of("*")); // ✅ OJO: ORIGIN PATTERNS, NO ORIGINS
             config.setAllowedHeaders(List.of("*"));
             config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
             return config;
         }));
 
-        http.authorizeHttpRequests(auth -> {
+        http.authorizeHttpRequests(auth -> { /// api/clientes/1/sesiones/por-fecha/
             // Rutas públicas
-            auth.requestMatchers("/api/auth/**").permitAll();
+            auth.requestMatchers("/api/auth/**", "/login", "/error").permitAll()
+                    .requestMatchers("/webhooks/whatsapp/**").permitAll()
+                    .requestMatchers("/api/tratamientos/search/**").permitAll()
+                    .requestMatchers("/api/sesiones/dto/**").permitAll()
+                    .requestMatchers("/api/clientes/*/tratamientos/*/sesiones-restantes")
+                    .permitAll()
+                    .requestMatchers("/api/clientes/by-telefono/**", "/api/clientes/by-nombre/**",
+                            "/api/clientes/by-documento/**")
+                    .permitAll()
+                    .requestMatchers("/api/clientes/*/tratamientos/*/sesiones/*/cancelar")
+                    .permitAll().requestMatchers("/api/clientes/*/sesiones/*/*/cancelar")
+                    .permitAll().requestMatchers("/api/clientes/*/sesiones/por-fecha/**")
+                    .permitAll();
+
 
             // Reglas dinámicas: cada vista.path solo accesible por sus rolesPermitidos
             vistaService.listar().forEach(v -> {
