@@ -1,4 +1,3 @@
-// src/main/java/com/estetica/agendamiento/dto/ClienteResponseDTO.java
 package com.estetica.agendamiento.dto;
 
 import com.estetica.agendamiento.model.Cliente;
@@ -13,14 +12,32 @@ public class ClienteResponseDTO {
     private String documento;
     private String email;
 
-    public static ClienteResponseDTO fromEntity(Cliente cliente) {
-        ClienteResponseDTO dto = new ClienteResponseDTO();
-        dto.setId(cliente.getId());
-        dto.setNombre(cliente.getNombre());
-        dto.setApellido(cliente.getApellido());
-        dto.setTelefono(cliente.getTelefono());
-        dto.setDocumento(cliente.getDocumento());
-        dto.setEmail(cliente.getCorreo());
-        return dto;
+    public ClienteResponseDTO() {
+    }
+
+    public ClienteResponseDTO(Long id,
+            String nombre,
+            String apellido,
+            String telefono,
+            String documento,
+            String email) {
+        this.id = id;
+        this.nombre = nombre;
+        this.apellido = apellido;
+        this.telefono = telefono;
+        this.documento = documento;
+        this.email = email;
+    }
+
+    public static ClienteResponseDTO fromEntity(Cliente c) {
+        if (c == null)
+            return null;
+        return new ClienteResponseDTO(
+                c.getId(),
+                c.getNombre(),
+                c.getApellido(),
+                c.getTelefono(),
+                c.getDocumento(),
+                c.getCorreo());
     }
 }

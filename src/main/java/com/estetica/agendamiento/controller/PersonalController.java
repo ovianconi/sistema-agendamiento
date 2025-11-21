@@ -17,7 +17,7 @@ public class PersonalController {
     private final PersonalService personalService;
 
     @GetMapping
-    public Page<Personal> getAll(@PageableDefault(size = 5, sort = "id") Pageable pageable) {
+    public Page<Personal> getAll(@PageableDefault(size = 10, sort = "id") Pageable pageable) {
         return personalService.findAll(pageable);
     }
 

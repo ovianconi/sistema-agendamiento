@@ -7,23 +7,27 @@ import com.estetica.agendamiento.dto.SesionResponseDTO;
 import com.estetica.agendamiento.dto.SesionesRestantesDTO;
 import com.estetica.agendamiento.dto.WhatsappMessageDTO;
 import com.estetica.agendamiento.util.FechaHoraRelativaUtil;
+import com.estetica.agendamiento.util.FechaNaturalService;
 import com.estetica.agendamiento.util.FechaRelativaUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.DefaultResponseErrorHandler;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.io.IOException;
 import java.time.DayOfWeek;
 import java.time.Duration;
 
@@ -32,6 +36,7 @@ public class NluOrchestrator {
 
     private final LlmClient llm;
     private final RestTemplate http = new RestTemplate();
+    private final FechaNaturalService fechaNaturalService;
 
     @Value("${whatsapp.access-token}")
     private String whatsappToken;
@@ -39,10 +44,14 @@ public class NluOrchestrator {
     @Value("${whatsapp.phone-number-id}")
     private String phoneNumberId;
 
-    // Contexto conversacional por teléfono
-    private final Map<String, ConversacionContexto> contextos = new ConcurrentHashMap<>();
+    @Value("${app.base-url}")
+    private String baseUrl;
 
-    // cada 10 minutos elimina contextos inactivos (sin actividad en los últimos 15 minutos)
+    // Contexto conversacional por teléfono
+    private static final Map<String, ConversacionContexto> contextos = new ConcurrentHashMap<>();
+
+    // cada 10 minutos elimina contextos inactivos (sin actividad en los últimos 15
+    // minutos)
     @Scheduled(fixedRate = 600000)
     public void limpiarContextosAntiguos() {
         Instant ahora = Instant.now();
@@ -56,453 +65,635 @@ public class NluOrchestrator {
     }
 
     @Autowired
-    public NluOrchestrator(@Qualifier("openAiLlmClient") LlmClient llm) {
+    public NluOrchestrator(@Qualifier("openAiLlmClient") LlmClient llm,
+            FechaNaturalService fechaNaturalService // ← NUEVO
+    ) {
         this.llm = llm;
+        this.fechaNaturalService = fechaNaturalService;
     }
 
-
-    // ===============================================================
-    // Procesamiento principal
-    // ===============================================================
+    // ===============================
+    // PROCESAMIENTO PRINCIPAL FINAL
+    // ===============================
     public void processIncomingMessage(WhatsappMessageDTO msg) {
         try {
             final String telefono = msg.getTelefono();
-            System.out.println("💬 Mensaje recibido: " + msg.getTexto());
+            final String textoOriginal = msg.getTexto();
+            System.out.println("💬 Mensaje recibido: " + textoOriginal);
             System.out.println("📱 Telefono: " + telefono);
 
-            String textoOriginal = msg.getTexto();
-            String textoNormalizado = normalizarAcentos(textoOriginal);
-            msg.setTexto(textoNormalizado); // opcional, si querés conservarlo limpio
+            // Normalizar texto
+            final String lower = normalizarAcentos(textoOriginal);
+            ConversacionContexto ctx = contextos.computeIfAbsent(telefono, t -> new ConversacionContexto());
+            ctx.ultimoAcceso = Instant.now();
 
-            System.out.println("🧹 Texto normalizado: " + textoNormalizado);
-            System.out.println("🧹 Texto msg: " + msg.getTexto());
+            System.out.println("🧹 Texto normalizado: " + lower);
+            System.out.println("🧩 Contexto actual al iniciar: " + ctx);
 
-            // ------- PRIORIDAD DE CONTEXTO: si hay agendamiento en curso, no paso por LLM -------
-            final String lower = normalizarAcentos(msg.getTexto());
-            ConversacionContexto ctx = contextos.getOrDefault(telefono, new ConversacionContexto());
+            // ==========================================================
+            // 🔁 AJUSTE DE HORARIO POST-CONFLICTO (no había personal)
+            // ==========================================================
+            // Caso: venimos de "no hay personal", marcamos ctx.ajustandoHorario = true
+            // y el usuario responde "sí", "a las 9", "mejor 9:30", "21", etc.
+            // 👉 No hay que volver a pedir tratamiento ni fecha; SOLO actualizamos la hora
+            // y reintentamos crear la sesión con (clienteId, tratamientoPendiente,
+            // fechaPendiente, horaNueva).
+            if (ctx.ajustandoHorario
+                    && "agendar_sesion".equals(ctx.ultimaIntencion)
+                    && ctx.clienteId != null
+                    && ctx.tratamientoPendiente != null
+                    && ctx.fechaPendiente != null) {
 
-            if ("agendar_sesion".equals(ctx.ultimaIntencion) && ctx.tratamientoPendiente != null) {
-                // 2.1 Confirmación directa: "sí", "ok", "confirmo" → agendar YA con lo que hay en
-                // el contexto
-                if (esAfirmacion(lower)) {
-                    System.out.println(
-                            "[CTX] Confirmación afirmativa detectada SIN LLM. Agendando con contexto…");
-                    System.out.println("     → ultratamiento usada: " + ctx.ultimoTratamiento);
-                    System.out.println("     → tratamientopend usada: " + ctx.tratamientoPendiente);
-                    System.out.println("     → Fecha usada: " + ctx.fechaPendiente);
-                    System.out.println("     → Hora usada: " + ctx.horaPendiente);
-                    LocalDate f =
-                            (ctx.fechaPendiente != null) ? ctx.fechaPendiente : ctx.ultimaFecha;
-                    LocalTime h = (ctx.horaPendiente != null) ? ctx.horaPendiente : ctx.ultimaHora;
+                System.out.println("ENTROOOOOOOOOOOO: 1  [AJUSTE POST-CONFLICTO]");
 
-                    if (f == null || h == null) {
-                        // si por algo faltan, re-preguntamos
+                // 1) Intentar extraer nueva HORA del texto actual
+                LocalTime nuevaHora = null;
+
+                // a) Parser natural robusto (soporta "a las 9", "9", "9:30", "3pm", etc.)
+                var parsedHora = fechaNaturalService.parse(lower); // usa tu FechaNaturalService
+                if (parsedHora != null && parsedHora.hora() != null) {
+                    nuevaHora = parsedHora.hora();
+                    System.out.println("ENTROOOOOOOOOOOO: 1.1  hora (FechaNaturalService) = " + nuevaHora);
+                }
+
+                // b) Fallback si no detectó con el servicio natural, usamos tu helper flexible
+                if (nuevaHora == null) {
+                    nuevaHora = parseHoraFlexible(textoOriginal);
+                    System.out.println("ENTROOOOOOOOOOOO: 1.2  hora (parseHoraFlexible) = " + nuevaHora);
+                }
+
+                // c) Si detectamos nueva hora, actualizamos; si no, mantenemos la anterior.
+                if (nuevaHora != null) {
+                    ctx.horaPendiente = nuevaHora;
+                }
+
+                // 2. En este punto DEBEMOS tener:
+                // - ctx.tratamientoPendiente
+                // - ctx.fechaPendiente
+                // - ctx.horaPendiente (la original o la nueva)
+                // - ctx.clienteId
+                if (ctx.clienteId != null
+                        && ctx.tratamientoPendiente != null
+                        && ctx.fechaPendiente != null
+                        && ctx.horaPendiente != null) {
+
+                    System.out.println("💡 [AJUSTE HORARIO] Reintento con:");
+                    System.out.println("   tratamiento=" + ctx.tratamientoPendiente);
+                    System.out.println("   fecha=" + ctx.fechaPendiente);
+                    System.out.println("   hora=" + ctx.horaPendiente);
+
+                    // reintentamos agendar DIRECTO, sin volver a preguntar tratamiento/fecha
+                    RespuestaOp res = crearSesionDesdeIA_R(
+                            ctx.clienteId,
+                            ctx.tratamientoPendiente,
+                            ctx.fechaPendiente.toString(),
+                            ctx.horaPendiente.toString());
+
+                    // ¿Sigue sin haber personal?
+                    if (res.conflictoCapacidad) {
+                        System.out.println("💡 [AJUSTE HORARIO] Sigue sin personal. Mantengo ajustandoHorario=true");
+                        // seguimos en modo ajuste, NO limpiamos nada
+                        contextos.put(telefono, ctx);
+
                         sendWhatsappMessage(telefono,
-                                "Necesito la fecha y hora para confirmar. ¿Me repetís ambas?");
+                                "A esa hora tampoco tenemos personal disponible 😕. " +
+                                        "Probemos otra hora para *" + ctx.tratamientoPendiente + "* el *" +
+                                        ctx.fechaPendiente + "*. Decime solo la hora.");
                         return;
                     }
 
-                    RespuestaOp res = crearSesionDesdeIA_R(ctx.clienteId, ctx.tratamientoPendiente,
-                            f.toString(), h.toString());
+                    // Si LLEGAMOS ACÁ, o bien:
+                    // - se pudo agendar directo
+                    // - o el backend devolvió un mensaje de confirmación tipo
+                    // "Te agendé..." / "Quedó agendado..." (tu patrón res.texto)
 
-                    // limpiar modo confirmación si agendó o fue error no-capacidad
+                    // Ya no estamos ajustando, ya tomamos una decisión
+                    ctx.ajustandoHorario = false;
                     ctx.esperandoConfirmacion = false;
-                    if (res.texto.toLowerCase().contains("agendé")
-                            || res.texto.toLowerCase().contains("agende")) {
-                        ctx.ultimoTratamiento = ctx.tratamientoPendiente;
-                        ctx.ultimaFecha = f;
-                        ctx.ultimaHora = h;
-                    }
-                    ctx.tratamientoPendiente = null;
-                    ctx.fechaPendiente = null;
-                    ctx.horaPendiente = null;
-                    contextos.put(telefono, ctx);
+                    ctx.esperandoConfirmacionAgendamiento = false;
 
+                    // Si realmente se agendó, guardamos en memoria histórica y limpiamos
+                    String resLower = res.texto.toLowerCase();
+                    if (resLower.contains("agendé")
+                            || resLower.contains("agende")
+                            || resLower.contains("agendada")
+                            || resLower.contains("agendado")) {
+
+                        ctx.ultimoTratamiento = ctx.tratamientoPendiente;
+                        ctx.ultimaFecha = ctx.fechaPendiente;
+                        ctx.ultimaHora = ctx.horaPendiente;
+
+                        ctx.tratamientoPendiente = null;
+                        ctx.fechaPendiente = null;
+                        ctx.horaPendiente = null;
+                    } else {
+                        // Si no se agendó aún (por ejemplo si el backend responde con
+                        // "Me confirmás... ?"), entonces seguimos esperando confirmación normal
+                        ctx.esperandoConfirmacionAgendamiento = true;
+                    }
+
+                    contextos.put(telefono, ctx);
                     sendWhatsappMessage(telefono, res.texto);
                     return;
                 }
 
-                // 2.2 Corrección en la misma frase (ej: “no, mejor el jueves a las 13”)
+                // Si por algún motivo NO tenemos fecha u hora todavía, pedimos lo que falta
+                // pero IMPORTANTÍSIMO: NO preguntamos el tratamiento otra vez.
+                if (ctx.horaPendiente == null) {
+                    contextos.put(telefono, ctx);
+                    sendWhatsappMessage(telefono,
+                            "¿A qué hora querés el mismo turno ese día? (por ejemplo 'a las 9')");
+                    return;
+                }
+                if (ctx.fechaPendiente == null) {
+                    contextos.put(telefono, ctx);
+                    sendWhatsappMessage(telefono,
+                            "¿Para qué día querés? (por ejemplo 'el lunes')");
+                    return;
+                }
+            }
+
+            // ==========================================================
+            // 0️⃣ ATAJOS CONTEXTUALES (confirmaciones, correcciones, etc.)
+            // ==========================================================
+            if ("agendar_sesion".equals(ctx.ultimaIntencion) && ctx.tratamientoPendiente != null) {
+
+                // 0.1 Confirmación directa
+                if (esAfirmacion(lower)) {
+                    System.out.println("[CTX] Confirmación afirmativa detectada (sin LLM).");
+                    System.out.println("ENTROOOOOOOOOOOO: 2.1");
+
+                    if (ctx.fechaPendiente == null || ctx.horaPendiente == null) {
+                        System.out.println("ENTROOOOOOOOOOOO: 3");
+                        pedirFaltantes(telefono, ctx);
+                        contextos.put(telefono, ctx);
+                        return;
+                    }
+
+                    System.out.println("🧩 Contexto ANTES IA: " + ctx);
+                    RespuestaOp res;
+                    try {
+                        res = crearSesionDesdeIA_R(
+                                ctx.clienteId,
+                                ctx.tratamientoPendiente,
+                                ctx.fechaPendiente.toString(),
+                                ctx.horaPendiente.toString());
+                        System.out.println("🧩 Antes de Explotar en IA: " + ctx.ajustandoHorario);
+                    } catch (RuntimeException ex) {
+                        System.out.println("🧩 Explota en IA: " + ctx.ajustandoHorario);
+                        if (ex.getMessage().contains("No hay personal disponible")) {
+                            System.out.println("⚠️ [CTX] Capturado conflicto de recursos");
+                            ctx.ajustandoHorario = true;
+                            ctx.esperandoConfirmacion = false;
+                            ctx.esperandoConfirmacionAgendamiento = false;
+                            contextos.put(telefono, ctx);
+                            sendWhatsappMessage(telefono,
+                                    "En ese horario no hay personal disponible 😕. " +
+                                            "¿Querés que probemos otra hora? Decime solo la hora, por ejemplo: *a las 9*.");
+                            return;
+                        }
+                        System.out.println("🧩 Explota en IA otra cosa: " + ctx.ajustandoHorario);
+                        throw ex; // otros errores reales
+                    }
+                    System.out.println("🧩 Contexto DESPUES IA: " + ctx);
+                    System.out.println("🧩 CONFLICTOOOOOOOOO: " + res.conflictoCapacidad);
+                    System.out.println("🧩 AjusteHorario despues que Explota en IA: " + ctx.ajustandoHorario);
+
+                    // ⛔️ CASO: SIN PERSONAL → entrar en modo "ajuste de horario" y cortar acá
+                    if (res.conflictoCapacidad) {
+                        System.out.println("ENTROOOOOOOOOOOO: 4");
+                        System.out.println("[CTX] No hay personal disponible. Entrando en modo ajuste de horario.");
+
+                        // NO limpiar tratamiento/fecha/hora; solo marcar flags:
+                        ctx.ajustandoHorario = true;
+                        ctx.esperandoConfirmacion = false;
+                        ctx.esperandoConfirmacionAgendamiento = false;
+
+                        // Persistir ANTES de responder
+                        contextos.put(telefono, ctx);
+
+                        sendWhatsappMessage(telefono,
+                                "En ese horario no tenemos personal disponible 😕. " +
+                                        "¿Querés que probemos otro horario para *" + ctx.tratamientoPendiente + "* el *"
+                                        +
+                                        ctx.fechaPendiente + "*? Decime solo la hora.");
+                        return; // ← IMPORTANTÍSIMO: no seguir con ningún flujo debajo
+                    }
+
+                    // ✅ Se pudo agendar (o ya quedó listo para confirmar)
+                    System.out.println("ENTROOOOOOOOOOOO: 4.1");
+                    ctx.esperandoConfirmacion = false;
+                    ctx.esperandoConfirmacionAgendamiento = false;
+                    ctx.ajustandoHorario = false;
+
+                    String resLower = res.texto.toLowerCase();
+                    if (resLower.contains("agendé") || resLower.contains("agende")
+                            || resLower.contains("agendada") || resLower.contains("agendado")) {
+                        System.out.println("ENTROOOOOOOOOOOO: 4.2");
+
+                        // memoria histórica
+                        ctx.ultimoTratamiento = ctx.tratamientoPendiente;
+                        ctx.ultimaFecha = ctx.fechaPendiente;
+                        ctx.ultimaHora = ctx.horaPendiente;
+
+                        // limpiar porque ya quedó
+                        ctx.tratamientoPendiente = null;
+                        ctx.fechaPendiente = null;
+                        ctx.horaPendiente = null;
+                    } else {
+                        // Si el backend devolvió un "¿confirmo?" mantené confirmación pendiente
+                        ctx.esperandoConfirmacionAgendamiento = true;
+                    }
+
+                    contextos.put(telefono, ctx);
+                    sendWhatsappMessage(telefono, res.texto);
+                    return;
+                }
+
+                // 0.2 Corrección tipo “no, mejor el jueves a las 13”
                 if (esNegacion(lower) || lower.contains("mejor") || lower.contains("cambi")) {
-                    Correccion corr = extraerCorreccionFechaHora(lower);
+                    System.out.println("ENTROOOOOOOOOOOO: 5");
+                    var corr = extraerCorreccionFechaHora(lower);
                     if (corr != null) {
+                        System.out.println("ENTROOOOOOOOOOOO: 6");
                         if (corr.fecha() != null)
                             ctx.fechaPendiente = corr.fecha();
                         if (corr.hora() != null)
                             ctx.horaPendiente = corr.hora();
 
-                        System.out.printf("[CTX] Corrección detectada SIN LLM → fecha=%s hora=%s%n",
-                                ctx.fechaPendiente, ctx.horaPendiente);
-
-                        // preguntar confirmación con los nuevos datos
-                        String fStr = (ctx.fechaPendiente != null) ? ctx.fechaPendiente.toString()
+                        String fStr = (ctx.fechaPendiente != null)
+                                ? ctx.fechaPendiente.toString()
                                 : "¿qué día?";
                         String hStr = (ctx.horaPendiente != null)
                                 ? ctx.horaPendiente.toString().substring(0, 5)
                                 : "¿qué hora?";
-                        sendWhatsappMessage(telefono, "Entonces sería *" + ctx.tratamientoPendiente
-                                + "* el *" + fStr + "* a las *" + hStr + "*, ¿confirmo?");
-                        ctx.esperandoConfirmacion = true;
+
+                        sendWhatsappMessage(telefono, "Perfecto 👍. Entonces sería *"
+                                + ctx.tratamientoPendiente + "* el *" + fStr + "* a las *" + hStr
+                                + "*, ¿confirmo?");
+                        ctx.esperandoConfirmacionAgendamiento = true;
                         contextos.put(telefono, ctx);
                         return;
                     }
 
-                    // Si dijo “no” pero no dio datos, pedimos qué cambiar
                     sendWhatsappMessage(telefono,
-                            "Perfecto 😊. Decime qué querés cambiar — la *fecha*, la *hora* o el *tratamiento*.");
-                    ctx.esperandoConfirmacion = true;
+                            "Genial 😊. Decime qué querés cambiar — la *fecha*, la *hora* o el *tratamiento*.");
+                    ctx.esperandoConfirmacionAgendamiento = true;
                     contextos.put(telefono, ctx);
                     return;
                 }
+                // 0.3 Mensaje puramente temporal en medio del flujo (ej: “el primer domingo de
+                // noviembre”)
+                if (esTemporal(lower)) {
+                    System.out.println("ENTROOOOOOOOOOOO: 7");
+                    var p = fechaNaturalService.parse(lower);
+                    if (p != null) {
+                        System.out.println("ENTROOOOOOOOOOOO: 8");
+                        System.out.println("ENTROOOOOOOOOOOO: fecha natural " + p.fecha());
+                        System.out.println("ENTROOOOOOOOOOOO: hora natural " + p.hora());
+                        if (p.fecha() != null)
+                            ctx.fechaPendiente = p.fecha();
+                        if (p.hora() != null)
+                            ctx.horaPendiente = p.hora();
+                        if (ctx.fechaPendiente == null || ctx.horaPendiente == null) {
+                            pedirFaltantes(telefono, ctx);
+                            contextos.put(telefono, ctx);
+                            return;
+                        }
+                        sendWhatsappMessage(telefono,
+                                "Entonces sería *" + ctx.tratamientoPendiente + "* el *"
+                                        + ctx.fechaPendiente + "* a las *"
+                                        + ctx.horaPendiente.toString().substring(0, 5)
+                                        + "*, ¿confirmo?");
+                        ctx.esperandoConfirmacionAgendamiento = true;
+                        ctx.ajustandoHorario = false; // <<< NUEVO
+                        contextos.put(telefono, ctx);
+                        return;
+                    }
+                }
             }
-            // ------- fin prioridad de contexto -------
+            // ==========================================================
+            // 1) PARSER LOCAL PRE-LMM (si la frase parece solo temporal)
+            // ==========================================================
+            if (esTemporal(lower)) {
+                System.out.println("ENTROOOOOOOOOOOO: 9");
+                var p = fechaNaturalService.parse(lower);
+                if (p != null && p.fecha() != null) {
+                    System.out.println("[PARSER] Fecha detectada localmente → " + p.fecha());
+                    // si había intención previa de agendar, seguimos
+                    if ("agendar_sesion".equals(ctx.ultimaIntencion)
+                            && ctx.tratamientoPendiente != null) {
+                        System.out.println("ENTROOOOOOOOOOOO: 9.1");
+                        if (p.fecha() != null) {
+                            System.out.println("ENTROOOOOOOOOOOO: 9.2");
+                            ctx.fechaPendiente = p.fecha();
+                        }
+                        if (p.hora() != null) {
+                            System.out.println("ENTROOOOOOOOOOOO: 9.3");
+                            ctx.horaPendiente = p.hora();
+                        }
+                        if (!ctx.tieneDatosCompletosParaAgendar()) {
+                            System.out.println("ENTROOOOOOOOOOOO: 9.4");
+                            pedirFaltantes(telefono, ctx);
+                            contextos.put(telefono, ctx);
+                            return;
+                        }
+                        sendWhatsappMessage(telefono,
+                                "Perfecto 👍. Entonces sería *" + ctx.tratamientoPendiente
+                                        + "* el *" + ctx.fechaPendiente + "* a las *"
+                                        + ctx.horaPendiente.toString().substring(0, 5)
+                                        + "*, ¿confirmo?");
+                        ctx.esperandoConfirmacionAgendamiento = true;
+                        ctx.ajustandoHorario = false; // <<< NUEVO
+                        contextos.put(telefono, ctx);
+                        return;
+                    }
+                }
+            }
 
-
-            IntentResult ir = llm.extractIntent(msg.getTexto(), "es-PY");
+            // ==========================================================
+            // 🧠 LLM
+            // ==========================================================
+            IntentResult ir = llm.extractIntent(textoOriginal, "es-PY");
             System.out.println("🧠 Intent detectado: " + ir);
-            System.out.println("📚 Contexto actual: " + ctx);
 
-            // Si el LLM dijo “saludo” pero hay flujo de confirmación pendiente → forzar
-            // confirmación
-            if ("saludo".equals(ir.getIntent()) && "agendar_sesion".equals(ctx.ultimaIntencion)
-                    && ctx.tratamientoPendiente != null) {
-                System.out.println(
-                        "[CTX] Override: LLM=saludo pero hay confirmación pendiente → tratar como confirmación.");
-                // Simula afirmación y ejecuta el mismo bloque de arriba:
-                LocalDate f = (ctx.fechaPendiente != null) ? ctx.fechaPendiente : ctx.ultimaFecha;
-                LocalTime h = (ctx.horaPendiente != null) ? ctx.horaPendiente : ctx.ultimaHora;
-                if (f == null || h == null) {
-                    sendWhatsappMessage(telefono,
-                            "Necesito la fecha y hora para confirmar. ¿Me repetís ambas?");
-                    return;
-                }
-                RespuestaOp res = crearSesionDesdeIA_R(ctx.clienteId, ctx.tratamientoPendiente,
-                        f.toString(), h.toString());
-
-                ctx.esperandoConfirmacion = false;
-                if (res.texto.toLowerCase().contains("agendé")
-                        || res.texto.toLowerCase().contains("agende")) {
-                    ctx.ultimoTratamiento = ctx.tratamientoPendiente;
-                    ctx.ultimaFecha = f;
-                    ctx.ultimaHora = h;
-                }
-                ctx.tratamientoPendiente = null;
-                ctx.fechaPendiente = null;
-                ctx.horaPendiente = null;
-                contextos.put(telefono, ctx);
-
-                sendWhatsappMessage(telefono, res.texto);
+            // Si estamos ajustando horario → no analizar otra intención
+            if (ctx.ajustandoHorario) {
+                System.out.println("🛑 Evitando override del LLM: estamos ajustando horario");
                 return;
             }
 
-            ir.setFecha(normalizarAcentos(ir.getFecha()));
-            ir.setHora(normalizarAcentos(ir.getHora()));
+            // ==========================================================
+            // Identificación de cliente (solo teléfono o documento)
+            // ==========================================================
+            ClienteResponseDTO cliente = identificarCliente(msg, ir, ctx);
 
-            // Cliente
-            ClienteResponseDTO cliente = identificarCliente(msg, ir);
-            if (cliente == null) {
-                sendWhatsappMessage(telefono,
-                        "No pude identificarte todavía. ¿Podés decirme tu nombre o documento?");
+            // ✅ Si encontramos cliente y no estaba en contexto
+            if (cliente != null && ctx.clienteId == null) {
+                ctx.clienteId = cliente.getId();
+                contextos.put(telefono, ctx);
+            }
+
+            // 🚨 Si NO se encontró cliente por teléfono/documento y tampoco teníamos uno en
+            // contexto
+            if (cliente == null && ctx.clienteId == null) {
+                // Guardamos TODO lo que el usuario ya dijo antes de pedir documento
+                ctx.ultimaIntencionPendiente = ir.getIntent(); // ej. agendar_sesion
+                ctx.tratPendienteConsulta = ir.getTratamiento();
+
+                // 🔹 Guardar también la fecha y hora ya detectadas (si las había)
+                if (ir.getFecha() != null) {
+                    var parsed = fechaNaturalService.parse(ir.getFecha());
+                    if (parsed != null && parsed.fecha() != null)
+                        ctx.fechaPendiente = parsed.fecha();
+                }
+                if (ir.getHora() != null) {
+                    var parsed = fechaNaturalService.parse(ir.getHora());
+                    if (parsed != null && parsed.hora() != null)
+                        ctx.horaPendiente = parsed.hora();
+                }
+
+                contextos.put(telefono, ctx);
+                sendWhatsappMessage(telefono, "No pude identificarte todavía. ¿Podés decirme tu documento?");
+                return;
+            }
+
+            // ✅ Si todavía no tenemos cliente en memoria pero ya lo encontramos por
+            // documento
+            if (cliente != null && ctx.clienteId == null) {
+                ctx.clienteId = cliente.getId();
+                contextos.put(telefono, ctx);
+            }
+
+            // ✅ Si NO tenemos cliente cargado en variable pero sí en contexto → leer de
+            // backend
+            if (cliente == null && ctx.clienteId != null) {
+                try {
+                    cliente = http.getForObject(
+                            baseUrl + "/api/clientes/" + ctx.clienteId,
+                            ClienteResponseDTO.class);
+                } catch (Exception e) {
+                    System.err.println("❌ Error releyendo cliente por id: " + e.getMessage());
+                }
+            }
+
+            // 🔹 Asignamos cliente al mensaje y al contexto
+            if (cliente != null) {
+                msg.setCliente(cliente);
+                ctx.clienteId = cliente.getId();
+                System.out.println("✅ Cliente identificado: " + cliente.getNombre() + " (ID " + cliente.getId() + ")");
+            } else {
+                // si aún no hay cliente, salimos
+                sendWhatsappMessage(telefono, "Necesito identificarte antes de continuar 😊. Decime tu documento.");
                 return;
             }
             msg.setCliente(cliente);
+            ctx.clienteId = cliente.getId();
 
-            // -------- Variables efectivas (no mutamos ir)
-            String tratamientoEff = firstNonNull(safeTrimOrNull(ir.getTratamiento()),
-                    ctx.tratamientoPendiente, ctx.ultimoTratamiento);
-            String fechaEffTxt = safeTrimOrNull(ir.getFecha());
-            String horaEffTxt = safeTrimOrNull(ir.getHora());
+            // ==========================================================
+            // INTENCIÓN
+            // ==========================================================
+            // Si había intención pendiente → la retomamos
+            if (ctx.ultimaIntencionPendiente != null && ctx.clienteId != null) {
+                System.out.println("ENTROOOOOOOOOOOO: 10");
+                System.out.println("🔁 Reprocesando intención pendiente: "
+                        + ctx.ultimaIntencionPendiente);
+                IntentResult irPend = new IntentResult();
+                irPend.setIntent(ctx.ultimaIntencionPendiente);
+                irPend.setTratamiento(ctx.tratPendienteConsulta);
+                irPend.setFecha(ir.getFecha());
+                irPend.setHora(ir.getHora());
 
-            // -------- Si hay contexto esperando confirmación y el usuario responde con “sí” o da
-            // nueva fecha/hora
-            String lower2 = msg.getTexto().toLowerCase(Locale.forLanguageTag("es-PY"));
-            boolean confirma = ctx.esperandoConfirmacion
-                    && lower2.matches(".*\\b(sí|si|dale|ok|perfecto)\\b.*");
-            boolean mencionaHora = lower2.matches(".*\\d{1,2}([:.]\\d{2})?\\s*(am|pm)?\\b.*");
-            boolean mencionaDia = contieneDiaRelativoOLiteral(lower2);
+                // ✅ Recuperar también fecha/hora que estaban pendientes antes de pedir
+                // documento
+                if (ctx.fechaPendiente != null)
+                    irPend.setFecha(ctx.fechaPendiente.toString());
+                if (ctx.horaPendiente != null)
+                    irPend.setHora(ctx.horaPendiente.toString());
 
-            LocalDate fechaCtx =
-                    (ctx.fechaPendiente != null) ? ctx.fechaPendiente : ctx.ultimaFecha;
-            LocalTime horaCtx = (ctx.horaPendiente != null) ? ctx.horaPendiente : ctx.ultimaHora;
+                // Limpiamos banderas para no repetir
+                ctx.ultimaIntencionPendiente = null;
+                ctx.tratPendienteConsulta = null;
+                contextos.put(telefono, ctx);
 
-            if (ctx.esperandoConfirmacion && (confirma || mencionaHora || mencionaDia)) {
-                if (mencionaHora) {
-                    String htxt = lower2; // parsea texto completo: soporta “2pm”, “2 pm”, “14”,
-                                          // “8hs”
-                    LocalTime tmp = parseHoraFlexible(htxt);
-                    if (tmp != null)
-                        horaCtx = tmp;
-                }
-                if (mencionaDia) {
-                    LocalDate tmp = FechaRelativaUtil.parseFecha(lower2);
-                    if (tmp != null)
-                        fechaCtx = tmp;
-                }
+                // Sustituimos el intent actual por el pendiente
+                ir = irPend;
+            }
+            String intent = (ir.getIntent() != null) ? ir.getIntent() : "";
+            switch (intent) {
+                case "agendar_sesion" -> {
+                    System.out.println("ENTROOOOOOOOOOOO: 11");
 
-                if ("agendar_sesion".equals(ctx.ultimaIntencion)) {
-                    RespuestaOp res = crearSesionDesdeIA_R(ctx.clienteId,
-                            firstNonNull(tratamientoEff, ctx.tratamientoPendiente,
-                                    ctx.ultimoTratamiento),
-                            (fechaCtx != null ? fechaCtx.toString() : null),
-                            (horaCtx != null ? horaCtx.toString() : null));
-
-                    if (res.conflictoCapacidad) {
-                        // seguimos esperando confirmación, actualizamos pendientes
-                        ctx.tratamientoPendiente = firstNonNull(tratamientoEff,
-                                ctx.tratamientoPendiente, ctx.ultimoTratamiento);
-                        ctx.fechaPendiente = fechaCtx;
-                        ctx.horaPendiente = horaCtx;
-                        ctx.ultimoTratamiento = ctx.tratamientoPendiente;
-                        ctx.ultimaFecha = fechaCtx;
-                        ctx.ultimaHora = horaCtx;
-                        ctx.esperandoConfirmacion = true;
+                    // 👇 Si ya estábamos ajustando horario, NO toques nada acá,
+                    // porque ese caso debió salir antes en el bloque de arriba
+                    if (ctx.ajustandoHorario) {
+                        System.out.println("ENTROOOOOOOOOOOO: 12");
+                        // seguridad defensiva: esto no debería pasar porque el bloque AJUSTE retorna
+                        // antes,
+                        // pero por si acaso:
                         contextos.put(telefono, ctx);
-                    } else {
-                        // si agendó ok o fue otro error no de capacidad → limpiar modo confirmación
-                        ctx.esperandoConfirmacion = false;
-                        ctx.tratamientoPendiente = null;
-                        ctx.fechaPendiente = null;
-                        ctx.horaPendiente = null;
-                        if (res.texto.toLowerCase().contains("agendé")
-                                || res.texto.toLowerCase().contains("agende")) {
-                            ctx.ultimoTratamiento =
-                                    firstNonNull(tratamientoEff, ctx.ultimoTratamiento);
-                            ctx.ultimaFecha = fechaCtx;
-                            ctx.ultimaHora = horaCtx;
-                        }
-                        contextos.put(telefono, ctx);
+                        sendWhatsappMessage(telefono,
+                                "Sigamos buscando otro horario para *" + ctx.tratamientoPendiente +
+                                        "* el *" + ctx.fechaPendiente + "*. Decime otra hora libre que te sirva 😊.");
+                        return;
                     }
 
-                    sendWhatsappMessage(telefono, res.texto);
-                    return;
-                }
-            }
-
-
-            // =======================================================
-            // ✅ Confirmación de agendamiento pendiente (v2 robusta y depurable)
-            // =======================================================
-            if (ctx.esperandoConfirmacionAgendamiento && ctx.tieneDatosCompletosParaAgendar()) {
-                String texto = msg.getTexto().toLowerCase(Locale.forLanguageTag("es-PY"));
-                System.out.println("🧩 [DEBUG] Confirmación pendiente detectada:");
-                System.out.println("     → Texto recibido: " + texto);
-                System.out.println("     → Contexto antes: fecha=" + ctx.fechaPendiente + ", hora="
-                        + ctx.horaPendiente);
-
-                boolean contieneNegacion =
-                        texto.matches(".*\\b(no|cambiar|otra|distinta|modificar|mejor)\\b.*");
-                boolean contieneDia = texto.matches(
-                        ".*(lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo|mañana|maana|pasado).*");
-                boolean contieneHora = texto.matches(
-                        ".*(\\b\\d{1,2}([:.]\\d{2})?\\s*(am|pm)?\\b|a las \\d{1,2}([:.]\\d{2})?)");
-
-                // 🧩 Caso 1: mensaje contiene negación y nueva fecha/hora
-                if (contieneNegacion && (contieneDia || contieneHora)) {
-                    System.out.println("🧠 [DEBUG] Frase negativa con corrección detectada.");
-
-                    LocalDate nuevaFecha = FechaRelativaUtil.parseFecha(texto);
-
-                    // ⚙️ Extraer solo el fragmento probable de hora
-                    String horaFragmento = null;
-                    var matcher =
-                            Pattern.compile("(\\d{1,2}([:.]\\d{2})?\\s*(am|pm)?)(?=\\b|\\s|$)")
-                                    .matcher(texto);
-                    if (matcher.find())
-                        horaFragmento = matcher.group(1);
-                    LocalTime nuevaHora = parseHoraFlexible(horaFragmento);
-
-                    System.out.println("     → Fragmento de hora detectado: " + horaFragmento);
-                    System.out.println("     → Nueva fecha parseada: " + nuevaFecha);
-                    System.out.println("     → Nueva hora parseada: " + nuevaHora);
-
-                    if (nuevaFecha != null)
-                        ctx.fechaPendiente = nuevaFecha;
-                    if (nuevaHora != null)
-                        ctx.horaPendiente = nuevaHora;
-
-                    ctx.esperandoConfirmacionAgendamiento = true;
-                    contextos.put(telefono, ctx);
-
-                    sendWhatsappMessage(telefono, String.format(
-                            "Perfecto 👍. Entonces sería *%s* el *%s* a las *%s*, ¿confirmo?",
-                            ctx.tratamientoPendiente, ctx.fechaPendiente, ctx.horaPendiente));
-                    System.out.println("✅ [DEBUG] Contexto actualizado tras corrección → fecha="
-                            + ctx.fechaPendiente + ", hora=" + ctx.horaPendiente);
-                    return;
-                }
-
-                // 🧩 Caso 2: confirmación afirmativa → guardar en BD
-                if (texto.matches(".*\\b(sí|si|dale|ok|correcto|perfecto|confirmo)\\b.*")) {
-                    System.out.println(
-                            "✅ [DEBUG] Confirmación afirmativa detectada. Creando sesión...");
-                    System.out.println("     → Fecha usada: " + ctx.fechaPendiente);
-                    System.out.println("     → Hora usada: " + ctx.horaPendiente);
-
-                    RespuestaOp res = crearSesionDesdeIA_R(ctx.clienteId, ctx.tratamientoPendiente,
-                            ctx.fechaPendiente != null ? ctx.fechaPendiente.toString() : "null",
-                            ctx.horaPendiente != null ? ctx.horaPendiente.toString() : "null");
-
-                    System.out.println("📦 [DEBUG] Body enviado al backend: cliente="
-                            + ctx.clienteId + ", trat=" + ctx.tratamientoPendiente + ", fecha="
-                            + ctx.fechaPendiente + ", hora=" + ctx.horaPendiente);
-                    System.out.println("📦 [DEBUG] Resultado backend: " + res.texto);
-                    sendWhatsappMessage(telefono, res.texto);
-                    contextos.remove(telefono);
-                    return;
-                }
-
-                // 🧩 Caso 3: negación sin especificar cambio
-                if (contieneNegacion) {
-                    System.out.println("🧠 [DEBUG] Negación sin detalle detectada.");
-                    ctx.esperandoConfirmacionAgendamiento = false;
-                    contextos.put(telefono, ctx);
-                    sendWhatsappMessage(telefono,
-                            "Perfecto 😊. Decime qué querés cambiar — la fecha, la hora o el tratamiento.");
-                    return;
-                }
-
-                // 🧩 Caso 4: cambio directo (sin “no”)
-                if (contieneDia || contieneHora) {
-                    LocalDate nuevaFecha = FechaRelativaUtil.parseFecha(texto);
-
-                    String horaFragmento = null;
-                    var matcher =
-                            Pattern.compile("(\\d{1,2}([:.]\\d{2})?\\s*(am|pm)?)(?=\\b|\\s|$)")
-                                    .matcher(texto);
-                    if (matcher.find())
-                        horaFragmento = matcher.group(1);
-                    LocalTime nuevaHora = parseHoraFlexible(horaFragmento);
-
-                    System.out.println("🧠 [DEBUG] Cambio directo detectado.");
-                    System.out.println("     → Fragmento de hora detectado: " + horaFragmento);
-                    System.out.println("     → Nueva fecha parseada: " + nuevaFecha);
-                    System.out.println("     → Nueva hora parseada: " + nuevaHora);
-
-                    if (nuevaFecha != null)
-                        ctx.fechaPendiente = nuevaFecha;
-                    if (nuevaHora != null)
-                        ctx.horaPendiente = nuevaHora;
-
-                    ctx.esperandoConfirmacionAgendamiento = true;
-                    contextos.put(telefono, ctx);
-
-                    sendWhatsappMessage(telefono,
-                            String.format("Entonces sería *%s* el *%s* a las *%s*, ¿confirmo?",
-                                    ctx.tratamientoPendiente, ctx.fechaPendiente,
-                                    ctx.horaPendiente));
-                    System.out.println("✅ [DEBUG] Contexto actualizado → fecha="
-                            + ctx.fechaPendiente + ", hora=" + ctx.horaPendiente);
-                    return;
-                }
-
-                // 🧩 Caso 5: sin coincidencias válidas
-                sendWhatsappMessage(telefono,
-                        "Solo necesito que confirmes si está bien agendar esa sesión 😊 (responde *sí* o *no*).");
-                System.out.println(
-                        "⚠️ [DEBUG] No se detectó acción válida, esperando siguiente mensaje.");
-                return;
-            }
-
-
-
-            // =======================================================
-            // Procesamiento principal con valores efectivos
-            // =======================================================
-            String respuesta;
-            switch (ir.getIntent()) {
-                case "consultar_sesiones_restantes" -> {
-                    respuesta = consultarSesionesRestantes(cliente.getId(), tratamientoEff);
-                }
-                case "cancelar_por_fecha_hora", "cancelar_por_tratamiento_fecha", "cancelar_sesion" -> {
-                    respuesta = cancelarSesionFlexible(cliente.getId(), tratamientoEff, fechaEffTxt,
-                            horaEffTxt);
-                }
-                case "agendar_sesion" -> {
                     ctx.ultimaIntencion = "agendar_sesion";
-                    ctx.tratamientoPendiente = tratamientoEff;
-                    ctx.fechaPendiente = FechaRelativaUtil.parseFecha(fechaEffTxt);
-                    ctx.horaPendiente = (horaEffTxt != null && !horaEffTxt.isBlank())
-                            ? parseHoraFlexible(horaEffTxt)
-                            : LocalTime.of(8, 0);
+                    ctx.tratamientoPendiente = firstNonNull(
+                            safeTrimOrNull(ir.getTratamiento()),
+                            ctx.tratamientoPendiente, ctx.ultimoTratamiento);
                     ctx.clienteId = cliente.getId();
+                    System.out.println("ENTROOOOOOOOOOOO: 12.1. " + ctx.tratamientoPendiente);
+                    var parsed = fechaNaturalService.parse(
+                            (ir.getFecha() != null ? ir.getFecha() : "")
+                                    + " " + (ir.getHora() != null ? ir.getHora() : ""));
+                    if (parsed != null) {
+                        System.out.println("ENTROOOOOOOOOOOO: 13");
+                        if (parsed.fecha() != null) {
+                            System.out.println("ENTROOOOOOOOOOOO: 14. " + parsed.fecha());
+                            ctx.fechaPendiente = parsed.fecha();
+                        }
+                        if (parsed.hora() != null) {
+                            System.out.println("ENTROOOOOOOOOOOO: 15. " + parsed.hora());
+                            ctx.horaPendiente = parsed.hora();
+                        }
+                    }
 
                     if (!ctx.tieneDatosCompletosParaAgendar()) {
+                        pedirFaltantes(telefono, ctx);
+                        System.out.println("ENTROOOOOOOOOOOO: 16");
+                        // esto DEBE quedar en false acá porque es la captura normal
+                        ctx.ajustandoHorario = false;
+
                         contextos.put(telefono, ctx);
-                        respuesta =
-                                "Necesito algunos datos más 😊. Decime qué tratamiento querés y para qué día.";
-                        break;
+                        return;
                     }
 
+                    // ya tengo todo → pedir confirmación
                     ctx.esperandoConfirmacionAgendamiento = true;
+                    ctx.ajustandoHorario = false; // todavía no falló capacidad
                     contextos.put(telefono, ctx);
-
-                    respuesta = String.format("Confirmo, ¿querés agendar *%s* el *%s* a las *%s*?",
-                            ctx.tratamientoPendiente, ctx.fechaPendiente, ctx.horaPendiente);
-                    break;
+                    sendWhatsappMessage(telefono,
+                            String.format(
+                                    "Me confirmás, ¿querés agendar *%s* el *%s* a las *%s*?",
+                                    ctx.tratamientoPendiente,
+                                    ctx.fechaPendiente,
+                                    ctx.horaPendiente.toString().substring(0, 5)));
+                    return;
                 }
-                case "agradecimiento" -> respuesta = "De nada 😊 ¡Que tengas un excelente día!";
-                case "saludo" -> respuesta = "¡Hola " + cliente.getNombre()
-                        + "! Soy el asistente de la clínica. ¿Querés consultar tus sesiones, cancelar o agendar una nueva?";
-                default -> respuesta = "No estoy seguro de cómo ayudarte con eso todavía 🤔.";
-            }
 
-            sendWhatsappMessage(telefono, respuesta);
+                case "consultar_sesiones_restantes" -> {
+                    String respuesta = consultarSesionesRestantes(
+                            cliente.getId(), ir.getTratamiento());
+                    sendWhatsappMessage(telefono, respuesta);
+                    return;
+                }
+
+                case "cancelar_sesion", "cancelar_por_tratamiento_fecha",
+                        "cancelar_por_fecha_hora" -> {
+                    String respuesta = cancelarSesionFlexible(
+                            cliente.getId(), ir.getTratamiento(),
+                            ir.getFecha(), ir.getHora());
+                    sendWhatsappMessage(telefono, respuesta);
+                    return;
+                }
+
+                case "saludo" -> {
+                    sendWhatsappMessage(telefono,
+                            "¡Hola " + cliente.getNombre()
+                                    + "! Soy el asistente de la clínica 😊. ¿Querés consultar tus sesiones, cancelar o agendar una nueva?");
+                    return;
+                }
+
+                default -> {
+                    sendWhatsappMessage(telefono,
+                            "No estoy seguro de cómo ayudarte con eso todavía 🤔.");
+                    return;
+                }
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
             sendWhatsappMessage(msg.getTelefono(),
-                    "Lo siento, hubo un error al procesar tu mensaje 😔. Intenta de nuevo más tarde.");
+                    "Lo siento, hubo un error al procesar tu mensaje 😔. Intentá de nuevo más tarde.");
         }
     }
 
     // ===============================================================
-    // Identificación de cliente
+    // Identificación de cliente simplificada: teléfono → documento
     // ===============================================================
-    private ClienteResponseDTO identificarCliente(WhatsappMessageDTO msg, IntentResult ir) {
-        try {
-            String baseUrl = "http://localhost:8080/api/clientes";
-            String ident = (ir.getClienteIdent() != null) ? ir.getClienteIdent() : "por_telefono";
+    private ClienteResponseDTO identificarCliente(WhatsappMessageDTO msg, IntentResult ir, ConversacionContexto ctx) {
 
-            switch (ident) {
-                case "por_documento" -> {
-                    String doc = extraerDocumento(msg.getTexto());
-                    if (doc != null)
-                        return http.getForObject(baseUrl + "/by-documento/" + doc,
-                                ClienteResponseDTO.class);
-                }
-                case "por_nombre" -> {
-                    String nombre = extraerNombre(msg.getTexto());
-                    if (nombre != null)
-                        return http.getForObject(baseUrl + "/by-nombre/" + nombre,
-                                ClienteResponseDTO.class);
-                }
-                default -> {
-                    String telefono = msg.getTelefono().replace("+", "").replace(" ", "");
-                    return http.getForObject(baseUrl + "/by-telefono/" + telefono,
-                            ClienteResponseDTO.class);
-                }
+        final String telefonoCrudo = msg.getTelefono();
+        final String normalizado = normalizePhone(telefonoCrudo);
+        final String posibleDocumento = extraerDocumento(msg.getTexto());
+
+        System.out.println("? identificarCliente()");
+        System.out.println("   ? telefonoCrudo  = " + telefonoCrudo);
+        System.out.println("   ? telefonoNorm   = " + normalizado);
+        System.out.println("   ? posibleDocumento = " + posibleDocumento);
+
+        // 1) si ya tenemos cliente en contexto, devolvemos ese
+        if (ctx != null && ctx.clienteId != null) {
+            try {
+                String url = baseUrl + "/api/clientes/" + ctx.clienteId;
+                System.out.println("   ? Ya había cliente en contexto. GET " + url);
+                return http.getForObject(url, ClienteResponseDTO.class);
+            } catch (Exception e) {
+                System.err.println("   ?? Error releyendo cliente por contexto: " + e.getMessage());
+            }
+        }
+
+        // 2) intentar por teléfono normalizado
+        try {
+            String urlTel = baseUrl + "/api/clientes/by-telefono/" + normalizado;
+            System.out.println("   ? GET telefono: " + urlTel);
+            ClienteResponseDTO c = http.getForObject(urlTel, ClienteResponseDTO.class);
+            if (c != null) {
+                System.out.println("   ✅ Cliente encontrado por teléfono: id=" + c.getId());
+                return c;
             }
         } catch (Exception e) {
-            System.err.println("❌ Error identificando cliente: " + e.getMessage());
+            System.err.println("   ?? Error por teléfono: " + e.getMessage());
         }
+
+        // 3) intentar por documento SOLO si el mensaje actual parece ser un documento
+        // (solo dígitos, >=5 chars)
+        if (posibleDocumento != null) {
+            try {
+                String urlDoc = baseUrl + "/api/clientes/by-documento/" + posibleDocumento;
+                System.out.println("   ? GET documento: " + urlDoc);
+                ClienteResponseDTO c = http.getForObject(urlDoc, ClienteResponseDTO.class);
+                if (c != null) {
+                    System.out.println("   ✅ Cliente encontrado por documento: id=" + c.getId());
+                    return c;
+                }
+            } catch (Exception e) {
+                System.err.println("   ?? Error por documento: " + e.getMessage());
+            }
+        }
+
+        System.out.println("   ? No se pudo identificar al cliente.");
         return null;
     }
 
-    // ===============================================================
-    // Utilidades varias
-    // ===============================================================
+    // encode helper para el nombre en la URL (espacios, acentos)
+    private String encode(String s) {
+        try {
+            return java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return s;
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Helpers para sacar documento / nombre del texto libre del usuario
+    // ---------------------------------------------------------------
+
     private String extraerDocumento(String texto) {
-        var matcher = Pattern.compile("\\b\\d{5,}\\b").matcher(texto);
-        return matcher.find() ? matcher.group() : null;
-    }
-
-    private String extraerNombre(String texto) {
-        texto = texto.toLowerCase(Locale.forLanguageTag("es-PY"));
-        if (texto.contains("soy "))
-            return texto.substring(texto.indexOf("soy ") + 4).trim();
-        if (texto.contains("me llamo "))
-            return texto.substring(texto.indexOf("me llamo ") + 9).trim();
-        return null;
+        // documento tipo 3395069, 1234567, etc. (>=5 dígitos)
+        var m = java.util.regex.Pattern.compile("\\b\\d{5,}\\b").matcher(texto);
+        return m.find() ? m.group() : null;
     }
 
     private static String safeTrimOrNull(String s) {
@@ -519,15 +710,6 @@ public class NluOrchestrator {
         return null;
     }
 
-    private boolean contieneDiaRelativoOLiteral(String lower) {
-        return lower.contains("lunes") || lower.contains("martes") || lower.contains("miércoles")
-                || lower.contains("miercoles") || lower.contains("jueves")
-                || lower.contains("viernes") || lower.contains("sábado") || lower.contains("sabado")
-                || lower.contains("domingo") || lower.contains("mañana") || lower.contains("maana")
-                || lower.contains("pasado mañana") || lower.contains("pasado maana")
-                || lower.matches(".*\\b(hoy|mañana|pasado)\\b.*");
-    }
-
     // ===============================================================
     // Consultas
     // ===============================================================
@@ -538,7 +720,7 @@ public class NluOrchestrator {
         if (tratamientoId == null)
             return "No identifiqué el tratamiento. ¿Podés repetir el nombre?";
         try {
-            String url = "http://localhost:8080/api/clientes/%d/tratamientos/%d/sesiones-restantes"
+            String url = baseUrl + "/api/clientes/%d/tratamientos/%d/sesiones-restantes"
                     .formatted(clienteId, tratamientoId);
             SesionesRestantesDTO dto = http.getForObject(url, SesionesRestantesDTO.class);
             if (dto == null)
@@ -562,8 +744,9 @@ public class NluOrchestrator {
     private String cancelarSesionFlexible(Long clienteId, String tratamiento, String fechaTexto,
             String horaTexto) {
         try {
-            if (fechaTexto == null || fechaTexto.isBlank())
+            if (fechaTexto == null || fechaTexto.isBlank()) {
                 return "¿Podés decirme de qué día querés cancelar la sesión?";
+            }
 
             // 1️⃣ Parsear fecha con los utilitarios + fallback IA
             var parsed = FechaHoraRelativaUtil.parse(((fechaTexto != null) ? fechaTexto : "") + " "
@@ -572,58 +755,54 @@ public class NluOrchestrator {
                     : FechaRelativaUtil.parseFecha(fechaTexto);
             String horaStr = (parsed != null && parsed.hora() != null) ? parsed.hora() : horaTexto;
 
-            if (fecha == null)
-                fecha = parseNthWeekdayOfMonth(fechaTexto, LocalDate.now());
-            if (fecha == null)
-                fecha = resolverFechaConIA(fechaTexto);
-
-            if (fecha == null)
-                return "No entendí la fecha '" + fechaTexto
-                        + "'. ¿Podés indicarme una fecha específica?";
-
-            // 2️⃣ Si el usuario no indicó hora, buscar sesión automáticamente
-            if (horaStr == null || horaStr.isBlank()) {
-                try {
-                    String urlBuscar = "http://localhost:8080/api/clientes/%d/sesiones/por-fecha/%s"
-                            .formatted(clienteId, fecha);
-                    // Este endpoint debería devolver lista o la única sesión del día
-                    var sesiones = http.getForObject(urlBuscar, SesionResponseDTO[].class);
-                    if (sesiones != null && sesiones.length == 1) {
-                        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("HH:mm");
-                        horaStr = sesiones[0].getHoraInicio() != null
-                                ? sesiones[0].getHoraInicio().format(fmt)
-                                : null;
-                    } else if (sesiones != null && sesiones.length > 1) {
-                        return "Tenés más de una sesión ese día 😅. ¿Podés decirme la hora o el tratamiento?";
-                    }
-                } catch (Exception e) {
-                    // si no existe el endpoint, seguimos con fallback a 08:00
+            if (fecha == null) {
+                // Fallback IA solo para FECHA
+                fecha = resolverFechaConIA(((fechaTexto != null) ? fechaTexto : ""));
+                if (fecha == null) {
+                    return "No entendí la fecha. ¿Podés indicarme para qué día exacto querés cancelar?";
                 }
             }
 
-            if (horaStr == null)
-                horaStr = "08:00";
-            String horaNorm = normalizarHora(horaStr);
+            // 2️⃣ Si NO hay hora: tratemos de identificar sesión única del día
+            if (horaStr == null || horaStr.isBlank()) {
+                // Endpoint: /api/sesiones/cliente/{clienteId}/por-fecha/{fecha} (tu endpoint
+                // nuevo)
+                SesionResponseDTO[] sesiones = http.getForObject(
+                        baseUrl + "/api/sesiones/cliente/{cid}/por-fecha/{f}",
+                        SesionResponseDTO[].class, clienteId, fecha.toString());
 
-            // 3️⃣ Construir la URL según tenga tratamiento o no
-            String url;
-            if (tratamiento != null && !tratamiento.isBlank()) {
-                Long tratId = buscarTratamientoIdPorNombre(tratamiento);
-                url = String.format(
-                        "http://localhost:8080/api/clientes/%d/tratamientos/%d/sesiones/%s/cancelar",
-                        clienteId, tratId, fecha);
-            } else {
-                url = String.format("http://localhost:8080/api/clientes/%d/sesiones/%s/%s/cancelar",
-                        clienteId, fecha, horaNorm);
+                if (sesiones == null || sesiones.length == 0) {
+                    return "No encontré ninguna sesión agendada para ese día.";
+                }
+                if (sesiones.length > 1) {
+                    return "Ese día tenés más de una sesión. ¿Podés decirme la hora (y si querés también el tratamiento) de la que querés cancelar?";
+                }
+
+                // Única sesión → usamos su hora real
+                horaStr = sesiones[0].getHoraInicio().toString();
             }
 
-            http.exchange(url, HttpMethod.PUT, null, String.class);
+            // 3️⃣ Construir la URL según tenga tratamiento o no
+            String horaNorm = normalizarHora(horaStr);
+            if (tratamiento != null && !tratamiento.isBlank()) {
+                Long tratId = buscarTratamientoIdPorNombre(tratamiento);
+                if (tratId == null)
+                    return "No identifiqué el tratamiento. ¿Podés repetir el nombre?";
 
-            // 4️⃣ Mensaje adaptado: solo incluir hora si se conoce realmente
-            String horaTextoOut =
-                    (horaTexto == null || horaTexto.isBlank()) ? "" : " a las " + horaNorm;
-            return "Tu sesión" + (tratamiento != null ? " de " + tratamiento : "") + " del " + fecha
-                    + horaTextoOut + " fue cancelada correctamente.";
+                String url = baseUrl + "/api/clientes/%d/tratamientos/%d/sesiones/%s/cancelar"
+                        .formatted(clienteId, tratId, fecha);
+                http.exchange(url, HttpMethod.PUT, null, String.class);
+
+                return "Tu sesión de " + tratamiento + " del " + fecha + " a las " + horaNorm
+                        + " fue cancelada correctamente.";
+            } else {
+                String url = baseUrl + "/api/clientes/%d/sesiones/%s/%s/cancelar"
+                        .formatted(clienteId, fecha, horaNorm);
+                http.exchange(url, HttpMethod.PUT, null, String.class);
+
+                return "Tu sesión del " + fecha + " a las " + horaNorm
+                        + " fue cancelada correctamente.";
+            }
 
         } catch (HttpClientErrorException e) {
             return extraerMensajeError(e.getResponseBodyAsString());
@@ -633,63 +812,126 @@ public class NluOrchestrator {
     }
 
     // ===============================================================
-    // Agendamiento (versión que devuelve señal de conflicto)
+    // Agendamiento (versión híbrida optimizada, con detección de conflicto de
+    // capacidad)
     // ===============================================================
     private RespuestaOp crearSesionDesdeIA_R(Long clienteId, String tratamiento, String fechaTexto,
             String horaTexto) {
+        System.out.println("ENTROOOOOOOOOOOO: IA");
         try {
             Long tratamientoId = buscarTratamientoIdPorNombre(tratamiento);
-            if (tratamientoId == null)
+            if (tratamientoId == null) {
                 return new RespuestaOp("No identifiqué el tratamiento. ¿Podés repetir el nombre?",
                         false);
+            }
 
-            // 1) Intento con FechaHoraRelativaUtil (puede no traer hora si no hay “a las …”)
-            var parsed = FechaHoraRelativaUtil.parse(((fechaTexto != null) ? fechaTexto : "") + " "
-                    + ((horaTexto != null) ? horaTexto : ""));
-
-            LocalDate fecha = (parsed != null) ? parsed.fechaInicio()
-                    : FechaRelativaUtil.parseFecha(fechaTexto);
             LocalTime hora = null;
+
+            System.out.println("─────────────── 🧩 [DEBUG crearSesionDesdeIA_R] ────────────────");
+            System.out.println(
+                    "🧾 Texto recibido → fecha='" + fechaTexto + "', hora='" + horaTexto + "'");
+
+            // 1️⃣ Parser de expresiones ordinales: “primer domingo de noviembre”
+            LocalDate fecha = parseNthWeekdayOfMonth((fechaTexto != null ? fechaTexto : "") + " "
+                    + (horaTexto != null ? horaTexto : ""), LocalDate.now());
+            if (fecha != null)
+                System.out.println("⏰ [FechaRelativa] Reconocido ordinal/mes → " + fecha);
+
+            // 2️⃣ Parser mixto local (fecha + hora en la misma frase)
+            var parsed = FechaHoraRelativaUtil.parse((fechaTexto != null ? fechaTexto : "") + " "
+                    + (horaTexto != null ? horaTexto : ""));
+            if (parsed != null && parsed.fechaInicio() != null && fecha == null) {
+                fecha = parsed.fechaInicio();
+                System.out.println("⏰ [FechaHoraRelativaUtil] Fecha detectada → " + fecha);
+            }
+
             if (parsed != null && parsed.hora() != null) {
-                hora = parseHoraFlexible(parsed.hora()); // robusto: “14”, “2pm”, “8hs”
+                hora = parseHoraFlexible(parsed.hora());
+                System.out.println("🕓 [FechaHoraRelativaUtil] Hora detectada → " + hora);
             }
-            // 2) Si aún no hay hora, intentamos con horaTexto (el LLM suele poner “14” sin “a las”)
-            if (hora == null) {
+
+            // 3️⃣ Parser básico de fechas relativas simples (“mañana”, “el viernes”)
+            if (fecha == null) {
+                LocalDate tmp = FechaRelativaUtil.parseFecha(fechaTexto);
+                if (tmp != null) {
+                    fecha = tmp;
+                    System.out.println("⏰ [FechaRelativaUtil] Fecha detectada → " + fecha);
+                }
+            }
+
+            // 4️⃣ Fallback IA si seguimos sin fecha
+            if (fecha == null) {
+                System.out.println("🤖 [IA] Activando fallback IA para resolver fecha...");
+                fecha = resolverFechaConIA((fechaTexto != null ? fechaTexto : ""));
+                System.out.println("🤖 [IA] Fecha devuelta por IA → " + fecha);
+            }
+
+            // 5️⃣ Intentar deducir hora desde texto libre si no vino del parser
+            if (hora == null && horaTexto != null && !horaTexto.isBlank()) {
                 hora = parseHoraFlexible(horaTexto);
+                System.out.println("🕓 [parseHoraFlexible] Hora detectada → " + hora);
             }
 
+            // 6️⃣ Validación final: no seguimos si falta hora o fecha
+            if (fecha == null) {
+                return new RespuestaOp(
+                        "Necesito la fecha exacta. ¿Para qué día querés agendar?",
+                        false);
+            }
             if (hora == null) {
-                System.out.println("🧠 [LAST_RESORT] HORA");
-                hora = LocalTime.of(8, 0); // último respaldo
-            }
-            if (fecha == null) {
-                fecha = parseNthWeekdayOfMonth(((fechaTexto != null) ? fechaTexto : "") + " "
-                        + ((horaTexto != null) ? horaTexto : ""), LocalDate.now());
+                return new RespuestaOp(
+                        "Perfecto. ¿A qué hora te viene bien esa sesión? (por ejemplo: 13, 13:30, 1pm)",
+                        false);
             }
 
-            // 🧠 Fallback IA si seguimos sin fecha
-            if (fecha == null) {
-                fecha = resolverFechaConIA(((fechaTexto != null) ? fechaTexto : "") + " "
-                        + ((horaTexto != null) ? horaTexto : ""));
+            System.out.println("📅 Fecha final → " + fecha + " | 🕓 Hora final → " + hora);
+
+            // 7️⃣ Construir body
+            var body = Map.of(
+                    "clienteId", clienteId,
+                    "tratamientoId", tratamientoId,
+                    "fecha", fecha.toString(),
+                    "horaInicio", hora.toString());
+
+            // 8️⃣ Configurar RestTemplate para lanzar excepción en 400
+            RestTemplate tmpHttp = new RestTemplate();
+            tmpHttp.setErrorHandler(new DefaultResponseErrorHandler() {
+                @Override
+                public boolean hasError(ClientHttpResponse response) throws IOException {
+                    return response.getStatusCode().value() >= 400;
+                }
+            });
+
+            // 9️⃣ Enviar al backend y manejar respuesta
+            try {
+                var resp = tmpHttp.postForEntity(baseUrl + "/api/sesiones/dto", body, String.class);
+                if (resp.getStatusCode().is2xxSuccessful()) {
+                    String horaStr = hora.toString().substring(0, 5);
+                    System.out.println("✅ Sesión creada correctamente en backend");
+                    return new RespuestaOp("Listo, agendé tu sesión de " + tratamiento + " para el "
+                            + fecha + " a las " + horaStr + ".", false);
+                }
+
+                // Si no fue 2xx, procesamos cuerpo (por seguridad)
+                String texto = extraerMensajeError(resp.getBody());
+                return new RespuestaOp(texto, esConflictoCapacidad(texto));
+
+            } catch (HttpClientErrorException e) {
+                String bodyError = e.getResponseBodyAsString();
+                String texto = extraerMensajeError(bodyError);
+
+                // ✅ NUEVO: si es 400 y menciona falta de personal, marcar conflicto
+                if (e.getStatusCode() == HttpStatus.BAD_REQUEST &&
+                        bodyError.toLowerCase().contains("no hay personal disponible")) {
+                    System.out.println("⚠️ [crearSesionDesdeIA_R] Conflicto de personal detectado (400)");
+                    return new RespuestaOp(texto, true);
+                }
+
+                return new RespuestaOp(texto, esConflictoCapacidad(texto));
             }
 
-            var body = Map.of("clienteId", clienteId, "tratamientoId", tratamientoId, "fecha",
-                    fecha.toString(), "horaInicio", hora.toString());
-
-            var resp = http.postForEntity("http://localhost:8080/api/sesiones/dto", body,
-                    String.class);
-            if (resp.getStatusCode().is2xxSuccessful()) {
-                String horaStr = hora.toString().substring(0, 5);
-                return new RespuestaOp("Listo, agendé tu sesión de " + tratamiento + " para el "
-                        + fecha + " a las " + horaStr + ".", false);
-            }
-            String texto = extraerMensajeError(resp.getBody());
-            return new RespuestaOp(texto, esConflictoCapacidad(texto));
-
-        } catch (HttpClientErrorException e) {
-            String texto = extraerMensajeError(e.getResponseBodyAsString());
-            return new RespuestaOp(texto, esConflictoCapacidad(texto));
         } catch (Exception e) {
+            System.out.println("❌ [crearSesionDesdeIA_R] Excepción general → " + e.getMessage());
             String texto = extraerMensajeError(e.getMessage());
             return new RespuestaOp(texto, false);
         }
@@ -733,52 +975,55 @@ public class NluOrchestrator {
     }
 
     private LocalTime parseHoraFlexible(String texto) {
-        if (texto == null || texto.isBlank())
+        if (texto == null)
             return null;
 
         try {
-            String t = texto.trim().toLowerCase(Locale.forLanguageTag("es-PY")).replace("hs", "")
-                    .replace("h.", "").replace("h", "").replace(".", ":").replace(",", ":")
-                    .replaceAll("\\s+", " ").trim();
+            String t = texto.toLowerCase(Locale.ROOT).trim();
 
-            // 💬 Casos literales
-            if (t.contains("mediodia") || t.contains("medio dia"))
-                return LocalTime.of(12, 0);
-            if (t.contains("medianoche"))
-                return LocalTime.MIDNIGHT;
+            // 🔹 Limpieza de expresiones comunes
+            t = t.replace("hs", "")
+                    .replace("horas", "")
+                    .replace("hora", "")
+                    .replace("hrs", "")
+                    .replace("h", "")
+                    .replace("a las", "")
+                    .replace("las", "")
+                    .replace("la", "")
+                    .trim();
 
-            // 💬 “de la tarde / noche / mañana” → AM/PM
-            boolean isPM = t.contains("pm") || t.contains("tarde") || t.contains("noche");
-            boolean isAM = t.contains("am") || t.contains("mañana") || t.contains("manana");
+            // 🔹 Normalización a formato HH:mm
+            if (t.matches("^\\d{1,2}$")) {
+                // Solo hora, sin minutos
+                return LocalTime.of(Integer.parseInt(t), 0);
+            } else if (t.matches("^\\d{1,2}:\\d{1,2}$")) {
+                return LocalTime.parse(t);
+            } else if (t.matches("^\\d{1,2}\\s?(am|pm)$")) {
+                int h = Integer.parseInt(t.replaceAll("\\D+", ""));
+                if (t.contains("pm") && h < 12)
+                    h += 12;
+                if (t.contains("am") && h == 12)
+                    h = 0;
+                return LocalTime.of(h, 0);
+            }
 
-            // limpiamos palabras no numéricas
-            t = t.replace("pm", "").replace("am", "").replace("de la tarde", "")
-                    .replace("de la noche", "").replace("de la mañana", "")
-                    .replace("de la manana", "").trim();
+            // 🔹 Intento final: extraer número
+            Matcher m = Pattern.compile("(\\d{1,2})(?::(\\d{2}))?").matcher(t);
+            if (m.find()) {
+                int h = Integer.parseInt(m.group(1));
+                int mnt = (m.group(2) != null) ? Integer.parseInt(m.group(2)) : 0;
+                if (h >= 0 && h < 24 && mnt >= 0 && mnt < 60)
+                    return LocalTime.of(h, mnt);
+            }
 
-            // si tiene solo número → agregamos minutos
-            if (!t.contains(":") && t.matches("\\d+"))
-                t += ":00";
+            System.out.println("?? Error al interpretar hora: " + texto + " → sin coincidencia");
+            return null;
 
-            // completamos si falta cero adelante
-            if (t.matches("^\\d:\\d{2}$"))
-                t = "0" + t;
-
-            LocalTime hora = LocalTime.parse(t);
-
-            // ajustes según AM/PM
-            if (isPM && hora.getHour() < 12)
-                hora = hora.plusHours(12);
-            if (isAM && hora.getHour() == 12)
-                hora = hora.minusHours(12);
-
-            return hora;
         } catch (Exception e) {
-            System.err.println("⚠️ Error al interpretar hora: " + texto + " → " + e.getMessage());
+            System.out.println("?? Error al interpretar hora: " + texto + " → " + e.getMessage());
             return null;
         }
     }
-
 
     // ===============================================================
     // Buscar tratamiento
@@ -787,7 +1032,7 @@ public class NluOrchestrator {
         if (nombre == null || nombre.isBlank())
             return null;
         try {
-            String url = "http://localhost:8080/api/tratamientos/search?nombre=" + nombre;
+            String url = baseUrl + "/api/tratamientos/search?nombre=" + nombre;
             return http.getForObject(url, Long.class);
         } catch (Exception e) {
             return null;
@@ -855,8 +1100,14 @@ public class NluOrchestrator {
         public String tratamientoPendiente;
         public LocalDate fechaPendiente;
         public LocalTime horaPendiente;
+
+        public String ultimaIntencionPendiente;
+        public String tratPendienteConsulta;
+
         public Long clienteId;
         public boolean esperandoConfirmacion;
+        public boolean esperandoConfirmacionAgendamiento;
+        public boolean ajustandoHorario; // NUEVO
 
         public Instant ultimoAcceso = Instant.now();
 
@@ -867,20 +1118,28 @@ public class NluOrchestrator {
 
         @Override
         public String toString() {
-            return "[intent=" + ultimaIntencion + ", tratamientoPend=" + tratamientoPendiente
-                    + ", fechaPend=" + fechaPendiente + ", horaPend=" + horaPendiente
-                    + ", ultimoTrat=" + ultimoTratamiento + ", ultFecha=" + ultimaFecha
-                    + ", ultHora=" + ultimaHora + ", clienteId=" + clienteId
-                    + ", esperandoConfirmacion=" + esperandoConfirmacion + "]";
+            return "[intent=" + ultimaIntencion
+                    + ", tratamientoPend=" + tratamientoPendiente
+                    + ", fechaPend=" + fechaPendiente
+                    + ", horaPend=" + horaPendiente
+                    + ", ultIntentPend=" + ultimaIntencionPendiente
+                    + ", tratPendConsulta=" + tratPendienteConsulta
+                    + ", ultimoTrat=" + ultimoTratamiento
+                    + ", ultFecha=" + ultimaFecha
+                    + ", ultHora=" + ultimaHora
+                    + ", clienteId=" + clienteId
+                    + ", esperandoConfirmacion=" + esperandoConfirmacion
+                    + ", esperandoConfirmacionAgendamiento=" + esperandoConfirmacionAgendamiento
+                    + ", ajustandoHorario=" + ajustandoHorario
+                    + "]";
         }
-
-        public boolean esperandoConfirmacionAgendamiento;
 
         public boolean tieneDatosCompletosParaAgendar() {
-            return clienteId != null && tratamientoPendiente != null && fechaPendiente != null
+            return clienteId != null
+                    && tratamientoPendiente != null
+                    && fechaPendiente != null
                     && horaPendiente != null;
         }
-
     }
 
     private String normalizarAcentos(String texto) {
@@ -911,7 +1170,10 @@ public class NluOrchestrator {
     private static final Map<String, Integer> ES_ORDINAL = Map.of("primer", 1, "primero", 1,
             "segundo", 2, "tercer", 3, "tercero", 3, "cuarto", 4, "quinto", 5);
 
-    /** "primer viernes de noviembre" → LocalDate (si ya pasó este año, lo mueve al próximo). */
+    /**
+     * "primer viernes de noviembre" → LocalDate (si ya pasó este año, lo mueve al
+     * próximo).
+     */
     private LocalDate parseNthWeekdayOfMonth(String texto, LocalDate hoy) {
         if (texto == null)
             return null;
@@ -933,7 +1195,8 @@ public class NluOrchestrator {
         int shift = (dow.getValue() - base.getDayOfWeek().getValue() + 7) % 7;
         LocalDate fecha = base.plusDays(shift).plusWeeks(ordinal - 1);
 
-        // si ya pasó este año y el texto no dice explícitamente "del año que viene", pásalo al
+        // si ya pasó este año y el texto no dice explícitamente "del año que viene",
+        // pásalo al
         // próximo año
         if (fecha.isBefore(hoy)) {
             fecha = fecha.plusYears(1);
@@ -947,13 +1210,12 @@ public class NluOrchestrator {
             return null;
         try {
             String hoy = LocalDate.now().toString();
-            String prompt =
+            String prompt = """
+                    Sos un parser de fechas en español (Paraguay). Dada esta frase de fecha en español y la fecha de hoy, responde SOLO la fecha resultante en formato ISO yyyy-MM-dd, sin palabras extra.
+                    Hoy es: %s
+                    Frase: "%s"
                     """
-                            Dada esta frase de fecha en español y la fecha de hoy, responde SOLO la fecha resultante en formato ISO yyyy-MM-dd, sin palabras extra.
-                            Hoy es: %s
-                            Frase: "%s"
-                            """
-                            .formatted(hoy, texto);
+                    .formatted(hoy, texto);
 
             // bajar la temperatura para ser determinista
             String out = llm.generateResponse(prompt, "es-PY", 0.2);
@@ -971,35 +1233,261 @@ public class NluOrchestrator {
 
     // ========= Helpers de intención contextual (sin pasar por LLM) =========
     private boolean esAfirmacion(String lower) {
-        return lower.matches(".*\\b(s[ií]|sí|si|dale|ok|okay|de una|perfecto|confirmo)\\b.*");
+        return lower
+                .matches(".*\\b(s[ií]|sí|si|dale|ok|okay|de una|perfecto|confirmo|correcto)\\b.*");
     }
 
     private boolean esNegacion(String lower) {
         return lower.matches(".*\\b(no|nop|negativo|mejor no)\\b.*");
     }
 
-    // Detecta fecha/hora en un texto libre para “corrección en la misma frase”
+    private boolean esTemporal(String lower) {
+        // Señales claras de “frase de fecha/hora”: días, ordinales, meses, “mañana”,
+        // etc.
+        return lower.matches(
+                ".*\\b(hoy|mañana|manana|pasado|primer|primero|segundo|tercer|tercero|cuarto|quinto|lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|\\d{1,2}(:\\d{2})?\\s*(am|pm)?)\\b.*");
+    }
+
+    /**
+     * Extrae correcciones de fecha/hora incluso en frases informales (“no, mejor a
+     * las 12”,
+     * “cambiemos para el lunes a las 14”, etc.)
+     */
+    private Correccion extraerCorreccionFechaHora(String texto) {
+        if (texto == null || texto.isBlank())
+            return null;
+
+        String lower = texto.toLowerCase().trim();
+
+        // 1️⃣ Intentar parseo normal con FechaNaturalService
+        var res = fechaNaturalService.parse(lower);
+        LocalDate fecha = (res != null) ? res.fecha() : null;
+        LocalTime hora = (res != null) ? res.hora() : null;
+
+        // 2️⃣ Fallback manual: detectar hora con expresiones “a las 12”, “tipo 9”,
+        // “sobre las 15”
+        if (hora == null) {
+            var matcher = java.util.regex.Pattern.compile(
+                    "\\b(a\\s+las\\s+|a\\s+la\\s+|tipo\\s+|sobre\\s+las\\s+)?(\\d{1,2})([:h\\.]?(\\d{2}))?\\s*(am|pm)?\\b")
+                    .matcher(lower);
+            if (matcher.find()) {
+                try {
+                    int h = Integer.parseInt(matcher.group(2));
+                    int min = (matcher.group(4) != null) ? Integer.parseInt(matcher.group(4)) : 0;
+                    boolean pm = matcher.group(5) != null && matcher.group(5).equalsIgnoreCase("pm");
+                    if (pm && h < 12)
+                        h += 12;
+                    if (!pm && h == 12 && matcher.group(5) == null && lower.contains("mañana"))
+                        h = 12; // mantener 12 del mediodía
+                    hora = LocalTime.of(h % 24, min);
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        // 3️⃣ Fallback manual: detectar día relativo o día de la semana (solo si no hay
+        // fecha aún)
+        if (fecha == null) {
+            if (lower.contains("mañana")) {
+                fecha = LocalDate.now().plusDays(1);
+            } else if (lower.contains("pasado mañana")) {
+                fecha = LocalDate.now().plusDays(2);
+            } else {
+                // Día de la semana (“el lunes”, “para el viernes”)
+                var dias = Map.of("lunes", DayOfWeek.MONDAY, "martes", DayOfWeek.TUESDAY,
+                        "miércoles", DayOfWeek.WEDNESDAY, "miercoles", DayOfWeek.WEDNESDAY,
+                        "jueves", DayOfWeek.THURSDAY, "viernes", DayOfWeek.FRIDAY, "sábado",
+                        DayOfWeek.SATURDAY, "sabado", DayOfWeek.SATURDAY, "domingo",
+                        DayOfWeek.SUNDAY);
+                for (var e : dias.entrySet()) {
+                    if (lower.contains(e.getKey())) {
+                        DayOfWeek hoy = LocalDate.now().getDayOfWeek();
+                        int diff = e.getValue().getValue() - hoy.getValue();
+                        if (diff <= 0)
+                            diff += 7; // próximo día
+                        fecha = LocalDate.now().plusDays(diff);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 4️⃣ Si no se detectó nada, devolver null (no hay corrección)
+        if (fecha == null && hora == null)
+            return null;
+
+        return new Correccion(fecha, hora);
+    }
+
+    /** Si falta algo, preguntamos específicamente, sin caer en hora default. */
+    private void pedirFaltantes(String telefono, ConversacionContexto ctx) {
+        if (ctx.tratamientoPendiente == null) {
+            sendWhatsappMessage(telefono, "¿Qué tratamiento querés agendar? 🙂");
+            return;
+        }
+        if (ctx.fechaPendiente == null && ctx.horaPendiente == null) {
+            sendWhatsappMessage(telefono,
+                    "Necesito la *fecha* y la *hora* 😊. Por ejemplo: \"este viernes a las 14\".");
+            return;
+        }
+        if (ctx.fechaPendiente == null) {
+            sendWhatsappMessage(telefono,
+                    "¿Para qué *día* querés agendar?");
+            return;
+        }
+        if (ctx.horaPendiente == null) {
+            sendWhatsappMessage(telefono, "¿A qué *hora* te viene bien? (p.ej. 13, 13:30, 1pm)");
+            return;
+        }
+    }
+
     private static record Correccion(LocalDate fecha, LocalTime hora) {
     }
 
-    private Correccion extraerCorreccionFechaHora(String lower) {
-        // 1) intenta fecha+hora con tu parser mixto
-        var mix = FechaHoraRelativaUtil.parse(lower);
-        LocalDate f = (mix != null) ? mix.fechaInicio() : FechaRelativaUtil.parseFecha(lower);
-
-        LocalTime h = null;
-        if (mix != null && mix.hora() != null) {
-            h = parseHoraFlexible(mix.hora());
-        }
-        if (h == null) {
-            // busca “2pm”, “2 pm”, “14”, “8hs”, “a las 15”, “13:30” etc.
-            h = parseHoraFlexible(lower);
-        }
-
-        if (f == null && h == null)
+    /**
+     * Normaliza el número de teléfono para Paraguay.
+     * Ejemplo:
+     * +595981123456 → 0981123456
+     * 595981123456 → 0981123456
+     * 981123456 → 0981123456
+     */
+    private String normalizePhone(String telefono) {
+        if (telefono == null)
             return null;
-        return new Correccion(f, h);
+        String num = telefono.trim().replaceAll("\\s+", "");
+
+        if (num.startsWith("+595")) {
+            num = "0" + num.substring(4);
+        } else if (num.startsWith("595")) {
+            num = "0" + num.substring(3);
+        } else if (!num.startsWith("0")) {
+            num = "0" + num;
+        }
+
+        return num;
     }
 
+    private boolean contieneAlgoDeFechaOHora(String lower) {
+        return lower.contains("lunes") || lower.contains("martes") || lower.contains("miércoles")
+                || lower.contains("miercoles")
+                || lower.contains("jueves") || lower.contains("viernes")
+                || lower.contains("sábado") || lower.contains("sabado")
+                || lower.contains("domingo") || lower.contains("mañana") || lower.contains("maana")
+                || lower.contains("pasado mañana") || lower.contains("pasado maana")
+                || lower.matches(".*\\b(hoy|mañana|pasado)\\b.*");
+    }
+
+    /**
+     * Helper interno para reprocesar una intención pendiente
+     * una vez que el cliente fue identificado correctamente.
+     */
+    private void processIncomingMessageInterno(WhatsappMessageDTO msg, IntentResult ir, ConversacionContexto ctx) {
+        try {
+            final String telefono = msg.getTelefono();
+
+            System.out.println("🔁 Reprocesando intención pendiente internamente: " + ir.getIntent());
+            System.out.println("📚 Contexto actual (interno): " + ctx);
+
+            // Asegurar cliente asociado
+            ClienteResponseDTO cliente = msg.getCliente();
+            if (cliente == null && ctx.clienteId != null) {
+                try {
+                    cliente = http.getForObject(
+                            baseUrl + "/api/clientes/" + ctx.clienteId,
+                            ClienteResponseDTO.class);
+                } catch (Exception e) {
+                    System.err.println("⚠️ Error al recargar cliente por ID: " + e.getMessage());
+                }
+            }
+
+            if (cliente == null) {
+                sendWhatsappMessage(telefono, "Hubo un problema al identificarte, ¿podés intentar nuevamente?");
+                return;
+            }
+
+            // ==========================================================
+            // 🔹 Redirigir según intención original (igual al flujo principal)
+            // ==========================================================
+            switch (ir.getIntent()) {
+                case "consultar_sesiones_restantes" -> {
+                    String trat = ir.getTratamiento();
+                    if (trat == null) {
+                        sendWhatsappMessage(telefono, "¿Podés decirme el tratamiento que querés consultar?");
+                        return;
+                    }
+                    String respuesta = consultarSesionesRestantes(ctx.clienteId, trat);
+                    sendWhatsappMessage(telefono, respuesta);
+                }
+
+                case "agendar_sesion" -> {
+                    ctx.ultimaIntencion = "agendar_sesion";
+                    if (ir.getTratamiento() != null)
+                        ctx.tratamientoPendiente = ir.getTratamiento();
+
+                    var parsed = fechaNaturalService.parse(
+                            (ir.getFecha() != null ? ir.getFecha() : "") + " " +
+                                    (ir.getHora() != null ? ir.getHora() : ""));
+                    if (parsed != null) {
+                        if (parsed.fecha() != null)
+                            ctx.fechaPendiente = parsed.fecha();
+                        if (parsed.hora() != null)
+                            ctx.horaPendiente = parsed.hora();
+                    }
+
+                    if (!ctx.tieneDatosCompletosParaAgendar()) {
+                        pedirFaltantes(telefono, ctx);
+                        return;
+                    }
+
+                    ctx.esperandoConfirmacionAgendamiento = true;
+                    contextos.put(telefono, ctx);
+                    sendWhatsappMessage(telefono, String.format(
+                            "Perfecto 👍. ¿Confirmo *%s* el *%s* a las *%s*?",
+                            ctx.tratamientoPendiente,
+                            ctx.fechaPendiente,
+                            ctx.horaPendiente.toString().substring(0, 5)));
+                }
+
+                case "cancelar_sesion", "cancelar_por_tratamiento_fecha", "cancelar_por_fecha_hora" -> {
+                    String respuesta = cancelarSesionFlexible(
+                            ctx.clienteId, ir.getTratamiento(), ir.getFecha(), ir.getHora());
+                    sendWhatsappMessage(telefono, respuesta);
+                }
+
+                default -> sendWhatsappMessage(telefono,
+                        "¡Listo, ya estás identificado! ¿Querés agendar, cancelar o consultar tus sesiones?");
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            sendWhatsappMessage(msg.getTelefono(), "Ocurrió un error al continuar tu solicitud 😔.");
+        }
+    }
+
+    /**
+     * Dado un texto como "a las 21", "a las 20:30", "tipo 22", intenta extraer SOLO
+     * la hora.
+     * No toca la fecha. Devuelve LocalTime o null si no entiende.
+     */
+    private LocalTime intentarSoloHora(String texto) {
+        if (texto == null)
+            return null;
+
+        // Primero probamos tu parseHoraFlexible en todo el texto.
+        LocalTime h = parseHoraFlexible(texto);
+        if (h != null)
+            return h;
+
+        // Si no, buscamos un fragmento "a las X" / "a las X:YY".
+        var m = java.util.regex.Pattern
+                .compile("(?:a las|alas|tipo|para las)\\s*(\\d{1,2}([:.]\\d{2})?)")
+                .matcher(texto.toLowerCase(java.util.Locale.forLanguageTag("es-PY")));
+        if (m.find()) {
+            String horaRaw = m.group(1);
+            return parseHoraFlexible(horaRaw);
+        }
+
+        return null;
+    }
 
 }

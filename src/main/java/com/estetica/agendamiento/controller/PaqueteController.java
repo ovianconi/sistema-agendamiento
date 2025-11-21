@@ -11,7 +11,6 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/paquetes")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:5173", allowCredentials = "true")
 public class PaqueteController {
 
     private final PaqueteService paqueteService;

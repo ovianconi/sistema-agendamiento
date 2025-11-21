@@ -16,9 +16,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.web.cors.CorsConfiguration;
-
-import java.util.List;
+import org.springframework.web.cors.CorsConfigurationSource;
 
 @Configuration
 @EnableWebSecurity
@@ -27,6 +25,7 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final VistaService vistaService;
+    private final CorsConfigurationSource corsConfigurationSource; // ✅ inyectamos el bean del CorsConfig
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -50,51 +49,65 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
-            AuthenticationProvider authenticationProvider) throws Exception {
-        http.csrf(csrf -> csrf.disable()).cors(cors -> cors.configurationSource(request -> {
-            CorsConfiguration config = new CorsConfiguration();
-            config.setAllowCredentials(true);
-            config.setAllowedOriginPatterns(List.of("*")); // ✅ OJO: ORIGIN PATTERNS, NO ORIGINS
-            config.setAllowedHeaders(List.of("*"));
-            config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-            return config;
-        }));
+            AuthenticationProvider authenticationProvider)
+            throws Exception {
 
-        http.authorizeHttpRequests(auth -> { /// api/clientes/1/sesiones/por-fecha/
-            // Rutas públicas
-            auth.requestMatchers("/api/auth/**", "/login", "/error").permitAll()
-                    .requestMatchers("/webhooks/whatsapp/**").permitAll()
-                    .requestMatchers("/api/tratamientos/search/**").permitAll()
-                    .requestMatchers("/api/sesiones/dto/**").permitAll()
-                    .requestMatchers("/api/clientes/*/tratamientos/*/sesiones-restantes")
-                    .permitAll()
-                    .requestMatchers("/api/clientes/by-telefono/**", "/api/clientes/by-nombre/**",
-                            "/api/clientes/by-documento/**")
-                    .permitAll()
-                    .requestMatchers("/api/clientes/*/tratamientos/*/sesiones/*/cancelar")
-                    .permitAll().requestMatchers("/api/clientes/*/sesiones/*/*/cancelar")
-                    .permitAll().requestMatchers("/api/clientes/*/sesiones/por-fecha/**")
-                    .permitAll();
+        http
+                .csrf(csrf -> csrf.disable())
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
+                .authorizeHttpRequests(auth -> {
 
+                    // ==============================
+                    // RUTAS PÚBLICAS
+                    // ==============================
+                    auth.requestMatchers(
+                            "/",
+                            "/login",
+                            "/error",
+                            "/privacidad",
 
-            // Reglas dinámicas: cada vista.path solo accesible por sus rolesPermitidos
-            vistaService.listar().forEach(v -> {
-                String[] roles = v.getRolesPermitidos().stream().map(RolVista::getRol) // Ej:
-                                                                                       // "ROLE_ADMIN"
-                        .toArray(String[]::new);
+                            // 🔥 AUTH
+                            "/api/auth/**",
 
-                if (roles.length > 0) {
-                    auth.requestMatchers(v.getPath()).hasAnyAuthority(roles);
-                }
-            });
+                            // 🔥 WEBHOOKS (LOCAL Y PRODUCCIÓN)
+                            "/webhooks/whatsapp/**",
+                            "/api/webhooks/whatsapp/**",
 
-            // Resto autenticado
-            auth.anyRequest().authenticated();
-        });
+                            // 🔥 RUTAS PÚBLICAS EXISTENTES
+                            "/api/tratamientos/search/**",
+                            "/api/sesiones/dto/**",
+                            "/api/clientes/*/tratamientos/*/sesiones-restantes",
+                            "/api/clientes/**",
+                            "/api/clientes/by-telefono/**",
+                            "/api/clientes/by-documento/**",
+                            "/api/clientes/*/tratamientos/*/sesiones/*/cancelar",
+                            "/api/clientes/*/sesiones/*/*/cancelar",
+                            "/api/sesiones/cliente/*/por-fecha/**").permitAll();
+
+                    // ==============================
+                    // 🔐 RUTAS DINÁMICAS SEGÚN ROLES
+                    // ==============================
+                    vistaService.listar().forEach(v -> {
+                        String[] roles = v.getRolesPermitidos().stream()
+                                .map(RolVista::getRol)
+                                .toArray(String[]::new);
+                        if (roles.length > 0) {
+                            auth.requestMatchers(v.getPath()).hasAnyAuthority(roles);
+                        }
+                    });
+
+                    // ==============================
+                    // CUALQUIER OTRA REQUIERE JWT
+                    // ==============================
+                    auth.anyRequest().authenticated();
+                });
 
         http.authenticationProvider(authenticationProvider);
+
+        // Filtro JWT antes del filtro de UsernamePasswordAuthentication
         http.addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
+
 }

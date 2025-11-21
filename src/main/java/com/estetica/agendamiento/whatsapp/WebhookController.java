@@ -1,23 +1,33 @@
 package com.estetica.agendamiento.whatsapp;
 
 import com.estetica.agendamiento.dto.WhatsappMessageDTO;
+import com.estetica.agendamiento.ai.OpenAiAudioClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/webhooks/whatsapp")
+@RequestMapping("${app.api.prefix}/webhooks/whatsapp")
 public class WebhookController {
 
     @Autowired
     private NluOrchestrator orchestrator;
 
+    @Autowired
+    private MetaMediaService metaMediaService;
+
+    @Autowired
+    private OpenAiAudioClient audioClient;
+
+    @Value("${whatsapp.verify-token}")
+    private String verifyTokenConfig;
+
     // ===========================================================
-    // ✅ VERIFICACIÓN DEL WEBHOOK (cuando Meta valida el callback)
+    // ✅ VERIFICACIÓN DEL WEBHOOK (GET)
     // ===========================================================
     @GetMapping
     public ResponseEntity<String> verifyWebhook(
@@ -25,19 +35,17 @@ public class WebhookController {
             @RequestParam(name = "hub.verify_token", required = false) String verifyToken,
             @RequestParam(name = "hub.challenge", required = false) String challenge) {
 
-        final String VERIFY_TOKEN = "appSgacer_verifai";
-
-        if ("subscribe".equals(mode) && VERIFY_TOKEN.equals(verifyToken)) {
+        if ("subscribe".equals(mode) && verifyTokenConfig.equals(verifyToken)) {
             System.out.println("✅ Webhook verificado correctamente por Meta.");
             return ResponseEntity.ok(challenge);
         } else {
-            System.err.println("❌ Falló la verificación del Webhook: token o modo inválido.");
+            System.err.println("❌ Falló la verificación del Webhook.");
             return ResponseEntity.status(403).body("Verification failed");
         }
     }
 
     // ===========================================================
-    // 📩 RECEPCIÓN DE MENSAJES DESDE WHATSAPP CLOUD API
+    // 📩 RECEPCIÓN DE MENSAJES DESDE META (POST)
     // ===========================================================
     @PostMapping
     public ResponseEntity<String> receiveMessage(@RequestBody Map<String, Object> payload) {
@@ -47,60 +55,90 @@ public class WebhookController {
 
             // 1️⃣ Validar tipo de objeto
             if (!"whatsapp_business_account".equals(payload.get("object"))) {
-                System.err.println("⚠️ Payload no corresponde a WhatsApp Business Account");
                 return ResponseEntity.ok("ignored");
             }
 
-            // 2️⃣ Obtener el array "entry"
+            // 2️⃣ Obtener entry
             List<Map<String, Object>> entryList = (List<Map<String, Object>>) payload.get("entry");
-            if (entryList == null || entryList.isEmpty()) {
-                System.err.println("⚠️ No se encontró entry en el payload");
+            if (entryList == null || entryList.isEmpty())
                 return ResponseEntity.ok("no entry");
-            }
 
-            // 3️⃣ Obtener el primer entry -> change -> value
             Map<String, Object> entry = entryList.get(0);
             List<Map<String, Object>> changes = (List<Map<String, Object>>) entry.get("changes");
-            if (changes == null || changes.isEmpty()) {
-                System.err.println("⚠️ No hay cambios en el entry");
+            if (changes == null || changes.isEmpty())
                 return ResponseEntity.ok("no changes");
-            }
 
             Map<String, Object> value = (Map<String, Object>) changes.get(0).get("value");
-            if (value == null) {
-                System.err.println("⚠️ No hay campo 'value' en el cambio");
+            if (value == null)
                 return ResponseEntity.ok("no value");
-            }
 
-            // 4️⃣ Extraer contacto (cliente) y mensaje
+            // 3️⃣ Contactos y mensajes
             List<Map<String, Object>> contacts = (List<Map<String, Object>>) value.get("contacts");
             List<Map<String, Object>> messages = (List<Map<String, Object>>) value.get("messages");
 
-            if (contacts == null || contacts.isEmpty() || messages == null || messages.isEmpty()) {
-                System.err.println("⚠️ No hay mensajes o contactos en el payload");
+            if (contacts == null || messages == null || contacts.isEmpty() || messages.isEmpty()) {
                 return ResponseEntity.ok("no messages");
             }
 
             Map<String, Object> contact = contacts.get(0);
-            Map<String, Object> profile = (Map<String, Object>) contact.get("profile");
             Map<String, Object> message = messages.get(0);
-            Map<String, Object> text = (Map<String, Object>) message.get("text");
 
-            // 5️⃣ Crear DTO con los datos extraídos
             String telefono = (String) contact.get("wa_id");
-            String nombre = (profile != null) ? (String) profile.get("name") : "Cliente";
-            String texto = (text != null) ? (String) text.get("body") : "";
+            String tipoMensaje = (String) message.get("type");
 
-            System.out.printf("📲 Mensaje recibido de %s (%s): %s%n", nombre, telefono, texto);
+            // ===========================================================
+            // 🗣️ CASO 1: TEXTO
+            // ===========================================================
+            if ("text".equals(tipoMensaje)) {
+                Map<String, Object> text = (Map<String, Object>) message.get("text");
+                String texto = (text != null) ? (String) text.get("body") : "";
 
-            WhatsappMessageDTO dto = new WhatsappMessageDTO();
-            dto.setTelefono(telefono);
-            dto.setTexto(texto);
+                WhatsappMessageDTO dto = new WhatsappMessageDTO();
+                dto.setTelefono(telefono);
+                dto.setTexto(texto);
+                orchestrator.processIncomingMessage(dto);
 
-            // 6️⃣ Pasar al orquestador para que procese y responda
-            orchestrator.processIncomingMessage(dto);
+                return ResponseEntity.ok("EVENT_RECEIVED");
+            }
 
-            return ResponseEntity.ok("EVENT_RECEIVED");
+            // ===========================================================
+            // 🎧 CASO 2: AUDIO
+            // ===========================================================
+            if ("audio".equals(tipoMensaje) || "voice".equals(tipoMensaje)) {
+
+                Map<String, Object> audioData = (Map<String, Object>) message.get("audio");
+                if (audioData == null || !audioData.containsKey("id")) {
+                    metaMediaService.sendWhatsappMessage(telefono,
+                            "No pude procesar el audio 😅, ¿podés reenviarlo?");
+                    return ResponseEntity.ok("no audio id");
+                }
+
+                String mediaId = (String) audioData.get("id");
+                byte[] audioBytes = metaMediaService.downloadMedia(mediaId);
+
+                if (audioBytes == null || audioBytes.length == 0) {
+                    metaMediaService.sendWhatsappMessage(telefono,
+                            "Ocurrió un error procesando el audio 😕, ¿podés escribirlo por texto?");
+                    return ResponseEntity.ok("download error");
+                }
+
+                String texto = audioClient.transcribe(audioBytes, "audio_" + telefono + ".ogg", "es");
+
+                WhatsappMessageDTO dto = new WhatsappMessageDTO();
+                dto.setTelefono(telefono);
+                dto.setTexto(texto);
+                orchestrator.processIncomingMessage(dto);
+
+                return ResponseEntity.ok("EVENT_RECEIVED");
+            }
+
+            // ===========================================================
+            // ❔ OTROS TIPOS
+            // ===========================================================
+            metaMediaService.sendWhatsappMessage(telefono,
+                    "Por ahora solo puedo procesar mensajes de texto. 😊");
+
+            return ResponseEntity.ok("unsupported");
 
         } catch (Exception e) {
             e.printStackTrace();

@@ -93,9 +93,8 @@ public class SesionController {
 
     // =======================================================
     // Buscar sesiones de un cliente por fecha (para cancelar o reprogramar)
-    // GET /api/clientes/{clienteId}/sesiones/por-fecha/{fecha}
     // =======================================================
-    @GetMapping("/clientes/{clienteId}/sesiones/por-fecha/{fecha}")
+    @GetMapping("/sesiones/cliente/{clienteId}/por-fecha/{fecha}")
     public ResponseEntity<List<SesionResponseDTO>> getSesionesPorFecha(@PathVariable Long clienteId,
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
         try {

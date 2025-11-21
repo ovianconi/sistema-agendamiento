@@ -2,16 +2,18 @@ package com.estetica.agendamiento.service;
 
 import com.estetica.agendamiento.dto.ClienteResponseDTO;
 import com.estetica.agendamiento.dto.SesionesRestantesDTO;
+import com.estetica.agendamiento.mapper.ClienteMapper;
 import com.estetica.agendamiento.model.Cliente;
 import com.estetica.agendamiento.model.ClientePaqueteTratamiento;
 import com.estetica.agendamiento.repository.ClientePaqueteTratamientoRepository;
 import com.estetica.agendamiento.repository.ClienteRepository;
 import com.estetica.agendamiento.repository.TratamientoRepository;
-import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @Service
@@ -21,52 +23,23 @@ public class ClienteService {
     private final ClientePaqueteTratamientoRepository clientePaqueteTratamientoRepository;
     private final TratamientoRepository tratamientoRepository;
 
-    public ClienteService(ClientePaqueteTratamientoRepository clientePaqueteTratamientoRepository,
-            TratamientoRepository tratamientoRepository, ClienteRepository clienteRepository) {
+    public ClienteService(
+            ClienteRepository clienteRepository,
+            ClientePaqueteTratamientoRepository clientePaqueteTratamientoRepository,
+            TratamientoRepository tratamientoRepository) {
+        this.clienteRepository = clienteRepository;
         this.clientePaqueteTratamientoRepository = clientePaqueteTratamientoRepository;
         this.tratamientoRepository = tratamientoRepository;
-        this.clienteRepository = clienteRepository;
     }
 
-    public List<Cliente> listarClientes() {
-        return clienteRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
+    // -------------------------------------------------
+    // helper interno
+    // -------------------------------------------------
+    private ClienteResponseDTO toDto(Cliente c) {
+        return ClienteResponseDTO.fromEntity(c);
     }
 
-    public Optional<Cliente> obtenerCliente(Long id) {
-        return clienteRepository.findById(id);
-    }
-
-    public Cliente guardarCliente(Cliente cliente) {
-        return clienteRepository.save(cliente);
-    }
-
-    public void eliminarCliente(Long id) {
-        clienteRepository.deleteById(id);
-    }
-
-    /**
-     * Devuelve la cantidad de sesiones restantes del tratamiento especificado para el cliente. Si
-     * no hay registros vigentes, devuelve 0.
-     */
-    public int getSesionesRestantes(Long clienteId, Long tratamientoId) {
-        var tratamiento = tratamientoRepository.findById(tratamientoId)
-                .orElseThrow(() -> new RuntimeException("Tratamiento no encontrado"));
-
-        var cptOpt = clientePaqueteTratamientoRepository
-                .findByClienteAndTratamientoConVigencia(clienteId, tratamientoId, LocalDate.now());
-
-        return cptOpt.map(ClientePaqueteTratamiento::getSesionesRestantes).orElse(0);
-    }
-
-    public Optional<ClienteResponseDTO> getClienteByTelefono(String telefono) {
-        String normalized = normalizePhone(telefono);
-        return clienteRepository.findByTelefono(normalized).map(this::toDTO);
-    }
-
-    /**
-     * Normaliza el número de teléfono para Paraguay. Ejemplo: +595981123456 → 0981123456
-     * 595981123456 → 0981123456 981123456 → 0981123456
-     */
+    // Normalizador de teléfono estilo PY
     private String normalizePhone(String telefono) {
         if (telefono == null)
             return null;
@@ -83,57 +56,90 @@ public class ClienteService {
         return num;
     }
 
-    private ClienteResponseDTO toDTO(Cliente cliente) {
-        ClienteResponseDTO dto = new ClienteResponseDTO();
-        dto.setId(cliente.getId());
-        dto.setNombre(cliente.getNombre());
-        dto.setApellido(cliente.getApellido());
-        dto.setTelefono(cliente.getTelefono());
-        dto.setDocumento(cliente.getDocumento());
-        dto.setEmail(cliente.getCorreo());
-        return dto;
+    // -------------------------------------------------
+    // CRUD / frontend
+    // -------------------------------------------------
+    public List<Cliente> listarClientes() {
+        return clienteRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
     }
 
-    public ClienteResponseDTO findByDocumento(String documento) {
-        return clienteRepository.findByDocumento(documento).map(ClienteResponseDTO::fromEntity)
-                .orElse(null);
+    public Optional<Cliente> obtenerCliente(Long id) {
+        return clienteRepository.findById(id);
     }
 
-    public ClienteResponseDTO findByNombre(String nombre) {
-        List<Cliente> lista = clienteRepository.findByNombreCompleto(nombre);
-        if (lista.isEmpty())
-            return null;
-        if (lista.size() == 1)
-            return ClienteResponseDTO.fromEntity(lista.get(0));
-
-        // si hay varios, devolver el primero y loguear aviso
-        System.out.println("⚠️ Múltiples coincidencias para nombre: " + nombre);
-        return ClienteResponseDTO.fromEntity(lista.get(0));
+    public Cliente guardarCliente(Cliente cliente) {
+        return clienteRepository.save(cliente);
     }
 
+    public void eliminarCliente(Long id) {
+        clienteRepository.deleteById(id);
+    }
+
+    public List<Cliente> listarClientesConPaquetes() {
+        return clienteRepository.findClientesConPaquetes();
+    }
+
+    // -------------------------------------------------
+    // búsquedas para WhatsApp / chatbot
+    // -------------------------------------------------
+    public Optional<Cliente> getClienteByTelefono(String telefonoNormalizado) {
+        return clienteRepository.findByTelefono(telefonoNormalizado);
+    }
+
+    public Cliente findEntityByDocumento(String documento) {
+        return clienteRepository.findByDocumento(documento)
+                .orElseThrow(NoSuchElementException::new);
+    }
+
+    public List<Cliente> searchByNombreFlexible(String nombre) {
+        return clienteRepository.searchByNombreFlexible(nombre.trim().toLowerCase());
+    }
+
+    // -------------------------------------------------
+    // lógica de sesiones restantes
+    // -------------------------------------------------
     public SesionesRestantesDTO obtenerSesionesRestantes(Long clienteId, Long tratamientoId) {
+
         var tratamiento = tratamientoRepository.findById(tratamientoId)
                 .orElseThrow(() -> new RuntimeException("Tratamiento no encontrado"));
 
-        var vigente = clientePaqueteTratamientoRepository
+        var vigenteOpt = clientePaqueteTratamientoRepository
                 .findByClienteAndTratamientoConVigencia(clienteId, tratamientoId, LocalDate.now());
 
-        if (vigente.isPresent()) {
-            var entidad = vigente.get();
-            return new SesionesRestantesDTO(clienteId, tratamientoId, tratamiento.getNombre(),
-                    entidad.getSesionesRestantes(), "vigente");
+        if (vigenteOpt.isPresent()) {
+            ClientePaqueteTratamiento cpt = vigenteOpt.get();
+            return new SesionesRestantesDTO(
+                    clienteId,
+                    tratamientoId,
+                    tratamiento.getNombre(),
+                    cpt.getSesionesRestantes(),
+                    "vigente");
         }
 
         boolean algunaVezTuvo = clientePaqueteTratamientoRepository
                 .existsByClientePaquete_Cliente_IdAndTratamiento_Id(clienteId, tratamientoId);
 
         if (algunaVezTuvo) {
-            return new SesionesRestantesDTO(clienteId, tratamientoId, tratamiento.getNombre(), 0,
+            return new SesionesRestantesDTO(
+                    clienteId,
+                    tratamientoId,
+                    tratamiento.getNombre(),
+                    0,
                     "agotado");
         }
 
-        return new SesionesRestantesDTO(clienteId, tratamientoId, tratamiento.getNombre(), 0,
+        return new SesionesRestantesDTO(
+                clienteId,
+                tratamientoId,
+                tratamiento.getNombre(),
+                0,
                 "no_tiene");
     }
 
+    public int getSesionesRestantesCount(Long clienteId, Long tratamientoId) {
+        return clientePaqueteTratamientoRepository
+                .findByClienteAndTratamientoConVigencia(clienteId, tratamientoId, LocalDate.now())
+                .map(ClientePaqueteTratamiento::getSesionesRestantes)
+                .orElse(0);
+    }
 }
