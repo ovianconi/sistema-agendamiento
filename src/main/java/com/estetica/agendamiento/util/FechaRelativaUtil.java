@@ -61,18 +61,13 @@ public class FechaRelativaUtil {
             boolean hayQueVieneDespues = (idxQueViene != -1 && idxQueViene > idxDia);
 
             // === “este martes” → esta semana (si no pasó)
-            if (hayEsteAntes) {
+            if (hayEsteAntes || hayProximoAntes || hayQueVieneDespues) {
                 if (diff < 0)
                     diff += 7;
                 return hoy.plusDays(diff);
             }
 
             // === “próximo martes” o “el martes que viene” → próxima semana
-            if (hayProximoAntes || hayQueVieneDespues) {
-                if (diff <= 0)
-                    diff += 7;
-                return hoy.plusDays(diff + 7);
-            }
 
             // === Solo “martes” → si no pasó, esta semana; si ya pasó, próxima
             if (diff < 0)

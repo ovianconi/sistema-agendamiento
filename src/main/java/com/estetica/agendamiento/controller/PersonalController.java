@@ -2,6 +2,8 @@ package com.estetica.agendamiento.controller;
 
 import com.estetica.agendamiento.model.Personal;
 import com.estetica.agendamiento.service.PersonalService;
+
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -22,12 +24,12 @@ public class PersonalController {
     }
 
     @PostMapping
-    public ResponseEntity<Personal> create(@RequestBody Personal personal) {
+    public ResponseEntity<Personal> create(@Valid @RequestBody Personal personal) {
         return ResponseEntity.ok(personalService.save(personal));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Personal> update(@PathVariable Long id, @RequestBody Personal personal) {
+    public ResponseEntity<Personal> update(@PathVariable Long id, @Valid @RequestBody Personal personal) {
         return ResponseEntity.ok(personalService.update(id, personal));
     }
 

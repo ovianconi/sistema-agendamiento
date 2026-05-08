@@ -6,6 +6,9 @@ import com.estetica.agendamiento.model.Cliente;
 import com.estetica.agendamiento.model.ClientePaqueteTratamiento;
 import com.estetica.agendamiento.repository.ClientePaqueteTratamientoRepository;
 import com.estetica.agendamiento.service.ClienteService;
+
+import jakarta.validation.Valid;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -41,13 +44,13 @@ public class ClienteController {
     }
 
     @PostMapping
-    public ResponseEntity<Cliente> crearCliente(@RequestBody Cliente cliente) {
+    public ResponseEntity<Cliente> crearCliente(@Valid @RequestBody Cliente cliente) {
         return ResponseEntity.ok(clienteService.guardarCliente(cliente));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<Cliente> actualizarCliente(@PathVariable Long id,
-            @RequestBody Cliente cliente) {
+            @Valid @RequestBody Cliente cliente) {
         return clienteService.obtenerCliente(id)
                 .map(existing -> {
                     cliente.setId(id);

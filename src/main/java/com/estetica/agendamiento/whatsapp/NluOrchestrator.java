@@ -50,6 +50,18 @@ public class NluOrchestrator {
     // Contexto conversacional por teléfono
     private static final Map<String, ConversacionContexto> contextos = new ConcurrentHashMap<>();
 
+    private boolean horaFaltante(ConversacionContexto ctx) {
+        if (ctx.horaPendiente == null)
+            return true;
+        return ctx.horaPendiente.equals(java.time.LocalTime.MIDNIGHT);
+    }
+
+    private String formatearFecha(LocalDate fecha) {
+        if (fecha == null)
+            return "?";
+        return fecha.format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+    }
+
     // cada 10 minutos elimina contextos inactivos (sin actividad en los últimos 15
     // minutos)
     @Scheduled(fixedRate = 600000)
@@ -322,11 +334,17 @@ public class NluOrchestrator {
                             ctx.horaPendiente = corr.hora();
 
                         String fStr = (ctx.fechaPendiente != null)
-                                ? ctx.fechaPendiente.toString()
+                                ? formatearFecha(ctx.fechaPendiente)
                                 : "¿qué día?";
-                        String hStr = (ctx.horaPendiente != null)
-                                ? ctx.horaPendiente.toString().substring(0, 5)
-                                : "¿qué hora?";
+
+                        if (horaFaltante(ctx)) {
+                            // No tenemos una hora fiable → pedirla explícitamente
+                            pedirFaltantes(telefono, ctx);
+                            contextos.put(telefono, ctx);
+                            return;
+                        }
+
+                        String hStr = ctx.horaPendiente.toString().substring(0, 5);
 
                         sendWhatsappMessage(telefono, "Perfecto 👍. Entonces sería *"
                                 + ctx.tratamientoPendiente + "* el *" + fStr + "* a las *" + hStr
@@ -342,6 +360,56 @@ public class NluOrchestrator {
                     contextos.put(telefono, ctx);
                     return;
                 }
+                // ==========================================================
+                // 0.2b Corrección implícita (sin “no”), SOLO si estamos
+                // en fase de confirmación de una cita.
+                // Ej: “a las 16”, “el viernes”, “viernes 15:00”
+                // ==========================================================
+                if (ctx.esperandoConfirmacionAgendamiento
+                        && "agendar_sesion".equals(ctx.ultimaIntencion)) {
+
+                    // Intentar extraer SOLO hora o SOLO fecha
+                    var corr = extraerCorreccionFechaHora(lower);
+
+                    // Caso corrección de HORA sin cambiar fecha
+                    if (corr != null && corr.hora() != null && !lower.contains("no")) {
+                        ctx.horaPendiente = corr.hora();
+
+                        String fechaStr = formatearFecha(ctx.fechaPendiente);
+                        String horaStr = ctx.horaPendiente.toString().substring(0, 5);
+
+                        sendWhatsappMessage(telefono,
+                                "Perfecto 👍. Entonces sería *" + ctx.tratamientoPendiente +
+                                        "* el *" + fechaStr + "* a las *" + horaStr + "*, ¿confirmo?");
+
+                        contextos.put(telefono, ctx);
+                        return;
+                    }
+
+                    // Caso corrección de FECHA sin cambiar hora
+                    if (corr != null && corr.fecha() != null && !lower.contains("no")) {
+                        ctx.fechaPendiente = corr.fecha();
+
+                        // Si falta hora → pedirla
+                        if (horaFaltante(ctx)) {
+                            pedirFaltantes(telefono, ctx);
+                            contextos.put(telefono, ctx);
+                            return;
+                        }
+
+                        String fechaStr = formatearFecha(ctx.fechaPendiente);
+                        String horaStr = ctx.horaPendiente.toString().substring(0, 5);
+
+                        sendWhatsappMessage(telefono,
+                                "Perfecto 👍. Entonces sería *" + ctx.tratamientoPendiente +
+                                        "* el *" + fechaStr + "* a las *" + horaStr + "*, ¿confirmo?");
+
+                        contextos.put(telefono, ctx);
+                        return;
+                    }
+
+                }
+
                 // 0.3 Mensaje puramente temporal en medio del flujo (ej: “el primer domingo de
                 // noviembre”)
                 if (esTemporal(lower)) {
@@ -355,7 +423,7 @@ public class NluOrchestrator {
                             ctx.fechaPendiente = p.fecha();
                         if (p.hora() != null)
                             ctx.horaPendiente = p.hora();
-                        if (ctx.fechaPendiente == null || ctx.horaPendiente == null) {
+                        if (ctx.fechaPendiente == null || horaFaltante(ctx)) {
                             pedirFaltantes(telefono, ctx);
                             contextos.put(telefono, ctx);
                             return;
@@ -373,41 +441,46 @@ public class NluOrchestrator {
                 }
             }
             // ==========================================================
-            // 1) PARSER LOCAL PRE-LMM (si la frase parece solo temporal)
+            // 1) PARSER LOCAL PRE-LMM: solo frases puramente temporales
+            // y solo si ya veníamos en un flujo de agendamiento.
             // ==========================================================
-            if (esTemporal(lower)) {
+            if (esTemporal(lower)
+                    && "agendar_sesion".equals(ctx.ultimaIntencion)
+                    && ctx.tratamientoPendiente != null) {
                 System.out.println("ENTROOOOOOOOOOOO: 9");
                 var p = fechaNaturalService.parse(lower);
-                if (p != null && p.fecha() != null) {
+                if (p != null && (p.fecha() != null || p.hora() != null)) {
                     System.out.println("[PARSER] Fecha detectada localmente → " + p.fecha());
-                    // si había intención previa de agendar, seguimos
-                    if ("agendar_sesion".equals(ctx.ultimaIntencion)
-                            && ctx.tratamientoPendiente != null) {
-                        System.out.println("ENTROOOOOOOOOOOO: 9.1");
-                        if (p.fecha() != null) {
-                            System.out.println("ENTROOOOOOOOOOOO: 9.2");
-                            ctx.fechaPendiente = p.fecha();
-                        }
-                        if (p.hora() != null) {
-                            System.out.println("ENTROOOOOOOOOOOO: 9.3");
-                            ctx.horaPendiente = p.hora();
-                        }
-                        if (!ctx.tieneDatosCompletosParaAgendar()) {
-                            System.out.println("ENTROOOOOOOOOOOO: 9.4");
-                            pedirFaltantes(telefono, ctx);
-                            contextos.put(telefono, ctx);
-                            return;
-                        }
-                        sendWhatsappMessage(telefono,
-                                "Perfecto 👍. Entonces sería *" + ctx.tratamientoPendiente
-                                        + "* el *" + ctx.fechaPendiente + "* a las *"
-                                        + ctx.horaPendiente.toString().substring(0, 5)
-                                        + "*, ¿confirmo?");
-                        ctx.esperandoConfirmacionAgendamiento = true;
-                        ctx.ajustandoHorario = false; // <<< NUEVO
+                    System.out.println("[PARSER] Hora detectada localmente → " + p.hora());
+
+                    if (p.fecha() != null) {
+                        System.out.println("ENTROOOOOOOOOOOO: 9.2");
+                        ctx.fechaPendiente = p.fecha();
+                    }
+                    if (p.hora() != null) {
+                        System.out.println("ENTROOOOOOOOOOOO: 9.3");
+                        ctx.horaPendiente = p.hora();
+                    }
+
+                    if (!ctx.tieneDatosCompletosParaAgendar() || horaFaltante(ctx)) {
+                        System.out.println("ENTROOOOOOOOOOOO: 9.4");
+                        pedirFaltantes(telefono, ctx);
                         contextos.put(telefono, ctx);
                         return;
                     }
+
+                    String fechaStr = formatearFecha(ctx.fechaPendiente);
+                    String horaStr = ctx.horaPendiente.toString().substring(0, 5);
+
+                    sendWhatsappMessage(telefono,
+                            "Perfecto 👍. Entonces sería *" + ctx.tratamientoPendiente
+                                    + "* el *" + fechaStr + "* a las *"
+                                    + horaStr + "*, ¿confirmo?");
+
+                    ctx.esperandoConfirmacionAgendamiento = true;
+                    ctx.ajustandoHorario = false;
+                    contextos.put(telefono, ctx);
+                    return;
                 }
             }
 
@@ -441,16 +514,18 @@ public class NluOrchestrator {
                 ctx.ultimaIntencionPendiente = ir.getIntent(); // ej. agendar_sesion
                 ctx.tratPendienteConsulta = ir.getTratamiento();
 
-                // 🔹 Guardar también la fecha y hora ya detectadas (si las había)
-                if (ir.getFecha() != null) {
-                    var parsed = fechaNaturalService.parse(ir.getFecha());
-                    if (parsed != null && parsed.fecha() != null)
-                        ctx.fechaPendiente = parsed.fecha();
-                }
-                if (ir.getHora() != null) {
-                    var parsed = fechaNaturalService.parse(ir.getHora());
-                    if (parsed != null && parsed.hora() != null)
-                        ctx.horaPendiente = parsed.hora();
+                // 🔹 Guardar también la fecha y hora ya detectadas (si las había),
+                // sin pisar lo que ya estaba en contexto
+                var parsedPrevio = fechaNaturalService.parse(
+                        (ir.getFecha() != null ? ir.getFecha() : "") + " " +
+                                (ir.getHora() != null ? ir.getHora() : ""));
+                if (parsedPrevio != null) {
+                    if (ctx.fechaPendiente == null && parsedPrevio.fecha() != null) {
+                        ctx.fechaPendiente = parsedPrevio.fecha();
+                    }
+                    if (ctx.horaPendiente == null && parsedPrevio.hora() != null) {
+                        ctx.horaPendiente = parsedPrevio.hora();
+                    }
                 }
 
                 contextos.put(telefono, ctx);
@@ -498,6 +573,7 @@ public class NluOrchestrator {
                 System.out.println("ENTROOOOOOOOOOOO: 10");
                 System.out.println("🔁 Reprocesando intención pendiente: "
                         + ctx.ultimaIntencionPendiente);
+
                 IntentResult irPend = new IntentResult();
                 irPend.setIntent(ctx.ultimaIntencionPendiente);
                 irPend.setTratamiento(ctx.tratPendienteConsulta);
@@ -505,7 +581,7 @@ public class NluOrchestrator {
                 irPend.setHora(ir.getHora());
 
                 // ✅ Recuperar también fecha/hora que estaban pendientes antes de pedir
-                // documento
+                // documento, dando prioridad a lo que ya estaba en contexto
                 if (ctx.fechaPendiente != null)
                     irPend.setFecha(ctx.fechaPendiente.toString());
                 if (ctx.horaPendiente != null)
@@ -516,69 +592,114 @@ public class NluOrchestrator {
                 ctx.tratPendienteConsulta = null;
                 contextos.put(telefono, ctx);
 
-                // Sustituimos el intent actual por el pendiente
-                ir = irPend;
+                // Procesamos directamente la intención pendiente en el flujo interno
+                // y salimos para no mezclar este mensaje (solo documento) con una nueva
+                // interpretación del LLM.
+                processIncomingMessageInterno(msg, irPend, ctx);
+                return;
             }
+
             String intent = (ir.getIntent() != null) ? ir.getIntent() : "";
+
             switch (intent) {
                 case "agendar_sesion" -> {
                     System.out.println("ENTROOOOOOOOOOOO: 11");
 
-                    // 👇 Si ya estábamos ajustando horario, NO toques nada acá,
-                    // porque ese caso debió salir antes en el bloque de arriba
+                    // 👇 Si ya estábamos ajustando horario, NO tocamos nada (flujo original)
                     if (ctx.ajustandoHorario) {
                         System.out.println("ENTROOOOOOOOOOOO: 12");
-                        // seguridad defensiva: esto no debería pasar porque el bloque AJUSTE retorna
-                        // antes,
-                        // pero por si acaso:
                         contextos.put(telefono, ctx);
                         sendWhatsappMessage(telefono,
                                 "Sigamos buscando otro horario para *" + ctx.tratamientoPendiente +
-                                        "* el *" + ctx.fechaPendiente + "*. Decime otra hora libre que te sirva 😊.");
+                                        "* el *" + ctx.fechaPendiente + "*. Decime otra hora 😊.");
                         return;
                     }
 
+                    // -----------------------------
+                    // 1️⃣ Capturar datos del intent
+                    // -----------------------------
                     ctx.ultimaIntencion = "agendar_sesion";
                     ctx.tratamientoPendiente = firstNonNull(
                             safeTrimOrNull(ir.getTratamiento()),
                             ctx.tratamientoPendiente, ctx.ultimoTratamiento);
                     ctx.clienteId = cliente.getId();
+
                     System.out.println("ENTROOOOOOOOOOOO: 12.1. " + ctx.tratamientoPendiente);
+
                     var parsed = fechaNaturalService.parse(
                             (ir.getFecha() != null ? ir.getFecha() : "")
                                     + " " + (ir.getHora() != null ? ir.getHora() : ""));
                     if (parsed != null) {
-                        System.out.println("ENTROOOOOOOOOOOO: 13");
-                        if (parsed.fecha() != null) {
-                            System.out.println("ENTROOOOOOOOOOOO: 14. " + parsed.fecha());
+                        if (parsed.fecha() != null)
                             ctx.fechaPendiente = parsed.fecha();
-                        }
-                        if (parsed.hora() != null) {
-                            System.out.println("ENTROOOOOOOOOOOO: 15. " + parsed.hora());
+                        if (parsed.hora() != null)
                             ctx.horaPendiente = parsed.hora();
-                        }
                     }
 
-                    if (!ctx.tieneDatosCompletosParaAgendar()) {
+                    // -----------------------------
+                    // 2️⃣ Si faltan datos → pedirlos
+                    // -----------------------------
+                    if (!ctx.tieneDatosCompletosParaAgendar() || horaFaltante(ctx)) {
                         pedirFaltantes(telefono, ctx);
-                        System.out.println("ENTROOOOOOOOOOOO: 16");
-                        // esto DEBE quedar en false acá porque es la captura normal
                         ctx.ajustandoHorario = false;
-
                         contextos.put(telefono, ctx);
                         return;
                     }
 
-                    // ya tengo todo → pedir confirmación
+                    // ------------------------------------------------
+                    // 3️⃣ 💥 VALIDACIÓN: ¿EL CLIENTE TIENE EL TRATAMIENTO?
+                    // ------------------------------------------------
+
+                    try {
+                        Long tratId = buscarTratamientoIdPorNombre(ctx.tratamientoPendiente);
+
+                        if (tratId == null) {
+                            sendWhatsappMessage(telefono,
+                                    "No identifiqué el tratamiento *" + ctx.tratamientoPendiente
+                                            + "*. ¿Podés repetir el nombre?");
+                            return;
+                        }
+
+                        String url = baseUrl + "/api/clientes/%d/tratamientos/%d/sesiones-restantes"
+                                .formatted(ctx.clienteId, tratId);
+
+                        System.out.println("🔎 [VALIDACIÓN TRATAMIENTO SWITCH] URL=" + url);
+
+                        SesionesRestantesDTO srd = http.getForObject(url, SesionesRestantesDTO.class);
+
+                        if (srd == null || "no_tiene".equalsIgnoreCase(srd.getEstado())) {
+                            sendWhatsappMessage(telefono,
+                                    "Revisé tus paquetes y no tenés el tratamiento *"
+                                            + ctx.tratamientoPendiente + "*.");
+                            return;
+                        }
+
+                    } catch (HttpClientErrorException.NotFound e) {
+                        sendWhatsappMessage(telefono,
+                                "Revisé tus paquetes y no tenés el tratamiento *"
+                                        + ctx.tratamientoPendiente + "*.");
+                        return;
+                    } catch (Exception ex) {
+                        sendWhatsappMessage(telefono,
+                                "No pude verificar si tenés ese tratamiento. ¿Podés repetir el nombre?");
+                        return;
+                    }
+
+                    // ---------------------------------------------
+                    // 4️⃣ Si pasa la validación → PREGUNTAR CONFIRMACIÓN
+                    // ---------------------------------------------
                     ctx.esperandoConfirmacionAgendamiento = true;
-                    ctx.ajustandoHorario = false; // todavía no falló capacidad
+                    ctx.ajustandoHorario = false;
                     contextos.put(telefono, ctx);
+
+                    String hStr = ctx.horaPendiente.toString().substring(0, 5);
+
                     sendWhatsappMessage(telefono,
                             String.format(
                                     "Me confirmás, ¿querés agendar *%s* el *%s* a las *%s*?",
                                     ctx.tratamientoPendiente,
-                                    ctx.fechaPendiente,
-                                    ctx.horaPendiente.toString().substring(0, 5)));
+                                    formatearFecha(ctx.fechaPendiente),
+                                    hStr));
                     return;
                 }
 
@@ -792,15 +913,15 @@ public class NluOrchestrator {
                 String url = baseUrl + "/api/clientes/%d/tratamientos/%d/sesiones/%s/cancelar"
                         .formatted(clienteId, tratId, fecha);
                 http.exchange(url, HttpMethod.PUT, null, String.class);
-
-                return "Tu sesión de " + tratamiento + " del " + fecha + " a las " + horaNorm
+                String fechaStr = formatearFecha(fecha);
+                return "Tu sesión de " + tratamiento + " del " + fechaStr + " a las " + horaNorm
                         + " fue cancelada correctamente.";
             } else {
                 String url = baseUrl + "/api/clientes/%d/sesiones/%s/%s/cancelar"
                         .formatted(clienteId, fecha, horaNorm);
                 http.exchange(url, HttpMethod.PUT, null, String.class);
-
-                return "Tu sesión del " + fecha + " a las " + horaNorm
+                String fechaStr = formatearFecha(fecha);
+                return "Tu sesión del " + fechaStr + " a las " + horaNorm
                         + " fue cancelada correctamente.";
             }
 
@@ -1325,7 +1446,7 @@ public class NluOrchestrator {
             sendWhatsappMessage(telefono, "¿Qué tratamiento querés agendar? 🙂");
             return;
         }
-        if (ctx.fechaPendiente == null && ctx.horaPendiente == null) {
+        if (ctx.fechaPendiente == null && horaFaltante(ctx)) {
             sendWhatsappMessage(telefono,
                     "Necesito la *fecha* y la *hora* 😊. Por ejemplo: \"este viernes a las 14\".");
             return;
@@ -1335,7 +1456,7 @@ public class NluOrchestrator {
                     "¿Para qué *día* querés agendar?");
             return;
         }
-        if (ctx.horaPendiente == null) {
+        if (horaFaltante(ctx)) {
             sendWhatsappMessage(telefono, "¿A qué *hora* te viene bien? (p.ej. 13, 13:30, 1pm)");
             return;
         }
@@ -1420,13 +1541,21 @@ public class NluOrchestrator {
                 }
 
                 case "agendar_sesion" -> {
+                    System.out.println("ENTROOOOOOOOOOOO: [processIncomingMessageInterno → agendar_sesion]");
                     ctx.ultimaIntencion = "agendar_sesion";
+
+                    // --------------------------------------------
+                    // 1️⃣ Capturar tratamiento si vino del LLM
+                    // --------------------------------------------
                     if (ir.getTratamiento() != null)
                         ctx.tratamientoPendiente = ir.getTratamiento();
 
+                    // --------------------------------------------
+                    // 2️⃣ Parse general (fecha + hora) del mensaje
+                    // --------------------------------------------
                     var parsed = fechaNaturalService.parse(
-                            (ir.getFecha() != null ? ir.getFecha() : "") + " " +
-                                    (ir.getHora() != null ? ir.getHora() : ""));
+                            (ir.getFecha() != null ? ir.getFecha() : "") + " "
+                                    + (ir.getHora() != null ? ir.getHora() : ""));
                     if (parsed != null) {
                         if (parsed.fecha() != null)
                             ctx.fechaPendiente = parsed.fecha();
@@ -1434,18 +1563,88 @@ public class NluOrchestrator {
                             ctx.horaPendiente = parsed.hora();
                     }
 
+                    // --------------------------------------------
+                    // 3️⃣ Si NO tenemos suficientes datos → pedimos lo faltante
+                    // --------------------------------------------
                     if (!ctx.tieneDatosCompletosParaAgendar()) {
-                        pedirFaltantes(telefono, ctx);
+                        pedirFaltantes(msg.getTelefono(), ctx);
+                        contextos.put(msg.getTelefono(), ctx);
                         return;
                     }
 
+                    // --------------------------------------------
+                    // 4️⃣ 💥 VALIDACIÓN CRÍTICA:
+                    // ¿EL CLIENTE REALMENTE TIENE ESTE TRATAMIENTO?
+                    // (ANTES de intentar crear sesión)
+                    // --------------------------------------------
+
+                    try {
+                        Long tratId = buscarTratamientoIdPorNombre(ctx.tratamientoPendiente);
+
+                        if (tratId == null) {
+                            sendWhatsappMessage(msg.getTelefono(),
+                                    "No identifiqué el tratamiento *" + ctx.tratamientoPendiente
+                                            + "*. ¿Podés repetir el nombre exacto?");
+                            return;
+                        }
+
+                        // Nuevo endpoint válido en tu backend
+                        String url = baseUrl + "/api/clientes/%d/tratamientos/%d/sesiones-restantes"
+                                .formatted(ctx.clienteId, tratId);
+
+                        System.out.println("🔎 [VALIDACIÓN TRATAMIENTOS] URL=" + url);
+
+                        SesionesRestantesDTO srd = http.getForObject(url, SesionesRestantesDTO.class);
+
+                        // Caso: el backend devuelve null → no está en ningún paquete
+                        if (srd == null) {
+                            System.out.println("⚠️ [VALIDACIÓN] DTO de sesiones-restantes = null");
+                            sendWhatsappMessage(msg.getTelefono(),
+                                    "Revisé tus paquetes y no contás con el tratamiento *"
+                                            + ctx.tratamientoPendiente + "*.");
+                            return;
+                        }
+
+                        // Caso: existe pero sin sesiones o no pertenece al cliente
+                        if ("no_tiene".equalsIgnoreCase(srd.getEstado())) {
+                            System.out.println("⚠️ [VALIDACIÓN] Estado = no_tiene");
+                            sendWhatsappMessage(msg.getTelefono(),
+                                    "No encontré el tratamiento *" + ctx.tratamientoPendiente
+                                            + "* entre tus paquetes.");
+                            return;
+                        }
+
+                    } catch (HttpClientErrorException.NotFound e) {
+                        // Cliente no tiene ese tratamiento en ningún paquete
+                        System.out.println("⚠️ [VALIDACIÓN] NotFound → no tiene el tratamiento");
+                        sendWhatsappMessage(msg.getTelefono(),
+                                "Revisé tus paquetes y no contás con el tratamiento *"
+                                        + ctx.tratamientoPendiente + "*.");
+                        return;
+                    } catch (Exception ex) {
+                        // Otros errores HTTP o de parseo
+                        System.out.println("⚠️ [VALIDACIÓN] Error inesperado: " + ex.getMessage());
+                        sendWhatsappMessage(msg.getTelefono(),
+                                "No pude verificar si tenés ese tratamiento. ¿Podés repetir el nombre?");
+                        return;
+                    }
+
+                    // --------------------------------------------
+                    // 5️⃣ Si llegamos hasta acá, el cliente SÍ tiene el tratamiento
+                    // → pedir confirmación
+                    // --------------------------------------------
+
                     ctx.esperandoConfirmacionAgendamiento = true;
-                    contextos.put(telefono, ctx);
-                    sendWhatsappMessage(telefono, String.format(
-                            "Perfecto 👍. ¿Confirmo *%s* el *%s* a las *%s*?",
-                            ctx.tratamientoPendiente,
-                            ctx.fechaPendiente,
-                            ctx.horaPendiente.toString().substring(0, 5)));
+                    contextos.put(msg.getTelefono(), ctx);
+
+                    String fechaStr = formatearFecha(ctx.fechaPendiente);
+                    String horaStr = ctx.horaPendiente.toString().substring(0, 5);
+
+                    sendWhatsappMessage(msg.getTelefono(),
+                            String.format("Perfecto 👍. ¿Confirmo *%s* el *%s* a las *%s*?",
+                                    ctx.tratamientoPendiente,
+                                    fechaStr,
+                                    horaStr));
                 }
 
                 case "cancelar_sesion", "cancelar_por_tratamiento_fecha", "cancelar_por_fecha_hora" -> {

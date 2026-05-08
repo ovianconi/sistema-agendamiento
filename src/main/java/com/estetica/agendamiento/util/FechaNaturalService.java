@@ -80,12 +80,20 @@ public class FechaNaturalService {
             if (texto.contains(entry.getKey())) {
                 DayOfWeek target = entry.getValue();
                 int delta = target.getValue() - base.getDayOfWeek().getValue();
-                if (delta <= 0)
+                System.out.println("DELTA " + delta);
+
+                // Si ya pasó ese día en esta semana, vamos al siguiente
+                if (delta < 0) {
                     delta += 7;
-                if (texto.contains("próximo") || texto.contains("proximo")
-                        || texto.contains("que viene"))
-                    delta += 7;
+                    System.out.println("HOARAAAAAAAAAAAAAAAAAA: 1 " + delta);
+                }
+
+                // ⚠️ IMPORTANTE:
+                // Ya NO sumamos otra semana por "próximo / que viene".
+                // En es-PY, "el próximo lunes / el lunes que viene" se usa
+                // para el lunes más cercano que todavía no pasó.
                 fecha = base.plusDays(delta);
+                System.out.println("FECHA (día de semana): " + fecha);
                 break;
             }
         }

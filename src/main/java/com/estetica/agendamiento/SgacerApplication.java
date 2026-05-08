@@ -15,13 +15,11 @@ public class SgacerApplication {
 
     @GetMapping("/test")
     public String testEndpoint() {
-        return "El backend está funcionando correctamente.";
+        return "El backend está  funcionando correctamente.";
     }
 
     public static void main(String[] args) {
         SpringApplication.run(SgacerApplication.class, args);
     }
 
-
 }
-

@@ -11,7 +11,7 @@ import lombok.*;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+@JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class Cliente {
 
     @Id
@@ -25,9 +25,11 @@ public class Cliente {
     private String apellido;
 
     @Column(nullable = false, unique = true, length = 15)
+    @Pattern(regexp = "^\\+?\\d+$", message = "El documento solo debe tener caracteres numéricos")
     private String documento;
 
     @Column(nullable = false, length = 50)
+    @Pattern(regexp = "^\\+?[1-9]\\d{7,14}$", message = "El teléfono internacional debe tener entre 8 y 15 dígitos, opcional '+' al inicio")
     private String telefono;
 
     @Email(message = "Correo electrónico no válido")
