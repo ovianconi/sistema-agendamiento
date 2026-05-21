@@ -15,6 +15,7 @@ import java.time.LocalTime;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -439,7 +440,17 @@ class SesionServiceTest {
 
                 when(clienteRepository.findById(1L)).thenReturn(java.util.Optional.of(cliente));
                 when(tratamientoRepository.findById(1L)).thenReturn(java.util.Optional.of(tratamiento));
-                when(parametroSistemaService.getParametroEntero("DURACION_SESION_MINUTOS", 60)).thenReturn(60);
+                when(parametroSistemaService.getParametroEntero(
+                                eq("DURACION_SESION_MINUTOS"), eq(60)))
+                                .thenReturn(60);
+
+                when(parametroSistemaService.getParametroHora(
+                                eq("HORA_ENTRADA"), any(LocalTime.class)))
+                                .thenReturn(LocalTime.of(8, 0));
+
+                when(parametroSistemaService.getParametroHora(
+                                eq("HORA_SALIDA"), any(LocalTime.class)))
+                                .thenReturn(LocalTime.of(20, 0));
 
                 when(sesionRepository.existsActivaByClienteAndRango(anyLong(), any(), any(), any()))
                                 .thenReturn(false);
@@ -496,7 +507,17 @@ class SesionServiceTest {
 
                 when(clienteRepository.findById(1L)).thenReturn(java.util.Optional.of(cliente));
                 when(tratamientoRepository.findById(1L)).thenReturn(java.util.Optional.of(tratamiento));
-                when(parametroSistemaService.getParametroEntero("DURACION_SESION_MINUTOS", 60)).thenReturn(60);
+                when(parametroSistemaService.getParametroEntero(
+                                eq("DURACION_SESION_MINUTOS"), eq(60)))
+                                .thenReturn(60);
+
+                when(parametroSistemaService.getParametroHora(
+                                eq("HORA_ENTRADA"), any(LocalTime.class)))
+                                .thenReturn(LocalTime.of(8, 0));
+
+                when(parametroSistemaService.getParametroHora(
+                                eq("HORA_SALIDA"), any(LocalTime.class)))
+                                .thenReturn(LocalTime.of(20, 0));
 
                 when(sesionRepository.existsActivaByClienteAndRango(anyLong(), any(), any(), any()))
                                 .thenReturn(false);

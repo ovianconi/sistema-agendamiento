@@ -4,6 +4,7 @@ import com.estetica.agendamiento.dto.SesionRequestDTO;
 import com.estetica.agendamiento.dto.SesionResponseDTO;
 import com.estetica.agendamiento.model.*;
 import com.estetica.agendamiento.repository.*;
+import com.fasterxml.jackson.annotation.JsonFormat;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -62,8 +63,7 @@ public class SesionService {
                                 duracionMinutos);
 
                 // Elegir paquete + descontar saldo
-                ClientePaqueteTratamiento cpt =
-                                seleccionarCPTConSaldoVigente(clienteId, tratamientoId);
+                ClientePaqueteTratamiento cpt = seleccionarCPTConSaldoVigente(clienteId, tratamientoId);
 
                 // Auto-asignar recursos obligatorios
                 Personal personal = elegirPersonalDisponibleObligatorio(tratamientoId, fecha,
@@ -85,7 +85,7 @@ public class SesionService {
         }
 
         // ======================================
-        // CREAR SESIÓN (DTO: JSON desde frontend)
+        // CREAR SESIÓN (Desde frontend / Desde WhatsApp)
         // ======================================
         @Transactional
         public Sesion crearSesionDesdeDTO(SesionRequestDTO dto) {
@@ -102,8 +102,16 @@ public class SesionService {
                 int tiempoSesion = parametroSistemaService
                                 .getParametroEntero("DURACION_SESION_MINUTOS", 60);
 
+                LocalTime horaEntrada = parametroSistemaService.getParametroHora("HORA_ENTRADA", LocalTime.of(8, 0));
+                LocalTime horaSalida = parametroSistemaService.getParametroHora("HORA_SALIDA", LocalTime.of(20, 0));
+
+                // Validaciones de hora
                 if (dto.getHoraFin() == null) {
                         dto.setHoraFin(dto.getHoraInicio().plusMinutes(tiempoSesion));
+                }
+                if ((dto.getHoraFin().isAfter(horaSalida)) || (horaEntrada.isAfter(dto.getHoraInicio()))) {
+                        throw new RuntimeException("Hora fuera del rango. De " + horaEntrada.toString() + " a "
+                                        + horaSalida.toString());
                 }
                 if (!dto.getHoraFin().isAfter(dto.getHoraInicio())) {
                         throw new RuntimeException("Hora fin debe ser posterior a hora inicio");
@@ -117,8 +125,7 @@ public class SesionService {
                 }
 
                 // Elegir paquete + descontar saldo (aceptando fechaValidez NULL como vigente)
-                ClientePaqueteTratamiento cpt =
-                                seleccionarCPTConSaldoVigente(cliente.getId(), tratamiento.getId());
+                ClientePaqueteTratamiento cpt = seleccionarCPTConSaldoVigente(cliente.getId(), tratamiento.getId());
 
                 // RESERVA de recursos (obligatoria)
                 // 1) Personal obligatorio siempre
@@ -188,8 +195,7 @@ public class SesionService {
                 }
 
                 LocalDateTime ahora = LocalDateTime.now();
-                LocalDateTime inicioSesion =
-                                LocalDateTime.of(sesion.getFecha(), sesion.getHoraInicio());
+                LocalDateTime inicioSesion = LocalDateTime.of(sesion.getFecha(), sesion.getHoraInicio());
 
                 if (ahora.isAfter(inicioSesion.minusHours(horasMinimas))) {
                         throw new RuntimeException(String.format(
@@ -253,7 +259,8 @@ public class SesionService {
 
                 ClientePaquete cp = sesion.getClientePaquete();
 
-                // Si el paquete nunca fue usado: setear fechaInicio y fechaValidez usando duración
+                // Si el paquete nunca fue usado: setear fechaInicio y fechaValidez usando
+                // duración
                 // (en meses)
                 if (cp.getFechaInicio() == null) {
                         cp.setFechaInicio(sesion.getFecha());
@@ -278,7 +285,6 @@ public class SesionService {
                 sesion.setEstado(Sesion.EstadoSesion.USADA);
                 return sesionRepository.save(sesion);
         }
-
 
         // ======================
         // Helpers de negocio
@@ -499,8 +505,6 @@ public class SesionService {
                 throw new RuntimeException(
                                 "No hay equipos disponibles para este tratamiento en ese horario");
         }
-
-
 
         private Equipo elegirEquipoSiRequiere(Tratamiento tratamiento, LocalDate fecha,
                         LocalTime horaInicio, LocalTime horaFin) {

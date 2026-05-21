@@ -1,5 +1,7 @@
 package com.estetica.agendamiento.whatsapp;
 
+import com.estetica.agendamiento.service.ChatContextService;
+
 import com.estetica.agendamiento.ai.IntentResult;
 import com.estetica.agendamiento.ai.LlmClient;
 import com.estetica.agendamiento.dto.ClienteResponseDTO;
@@ -37,6 +39,8 @@ public class NluOrchestrator {
     private final LlmClient llm;
     private final RestTemplate http = new RestTemplate();
     private final FechaNaturalService fechaNaturalService;
+
+    private final ChatContextService chatContextService;
 
     @Value("${whatsapp.access-token}")
     private String whatsappToken;
@@ -77,11 +81,13 @@ public class NluOrchestrator {
     }
 
     @Autowired
-    public NluOrchestrator(@Qualifier("openAiLlmClient") LlmClient llm,
-            FechaNaturalService fechaNaturalService // ← NUEVO
-    ) {
+    public NluOrchestrator(
+            @Qualifier("openAiLlmClient") LlmClient llm,
+            FechaNaturalService fechaNaturalService,
+            ChatContextService chatContextService) {
         this.llm = llm;
         this.fechaNaturalService = fechaNaturalService;
+        this.chatContextService = chatContextService;
     }
 
     // ===============================
@@ -91,6 +97,18 @@ public class NluOrchestrator {
         try {
             final String telefono = msg.getTelefono();
             final String textoOriginal = msg.getTexto();
+
+            // agregando nueva logica
+            chatContextService.guardarMensajeUsuario(telefono, textoOriginal, null);
+            var estadoBD = chatContextService.obtenerOCrearEstado(telefono);
+            System.out.println("🧠 Estado BD actual: flujoActivo="
+                    + estadoBD.getFlujoActivo()
+                    + ", esperando=" + estadoBD.getEsperando()
+                    + ", tratamiento=" + estadoBD.getTratamiento()
+                    + ", fecha=" + estadoBD.getFecha()
+                    + ", hora=" + estadoBD.getHora()
+                    + ", confirmacion=" + estadoBD.isEsperandoConfirmacion());
+
             System.out.println("💬 Mensaje recibido: " + textoOriginal);
             System.out.println("📱 Telefono: " + telefono);
 
@@ -166,6 +184,7 @@ public class NluOrchestrator {
                         System.out.println("💡 [AJUSTE HORARIO] Sigue sin personal. Mantengo ajustandoHorario=true");
                         // seguimos en modo ajuste, NO limpiamos nada
                         contextos.put(telefono, ctx);
+                        sincronizarEstadoBD(telefono, ctx);
 
                         sendWhatsappMessage(telefono,
                                 "A esa hora tampoco tenemos personal disponible 😕. " +
@@ -205,6 +224,7 @@ public class NluOrchestrator {
                     }
 
                     contextos.put(telefono, ctx);
+                    sincronizarEstadoBD(telefono, ctx);
                     sendWhatsappMessage(telefono, res.texto);
                     return;
                 }
@@ -213,12 +233,14 @@ public class NluOrchestrator {
                 // pero IMPORTANTÍSIMO: NO preguntamos el tratamiento otra vez.
                 if (ctx.horaPendiente == null) {
                     contextos.put(telefono, ctx);
+                    sincronizarEstadoBD(telefono, ctx);
                     sendWhatsappMessage(telefono,
                             "¿A qué hora querés el mismo turno ese día? (por ejemplo 'a las 9')");
                     return;
                 }
                 if (ctx.fechaPendiente == null) {
                     contextos.put(telefono, ctx);
+                    sincronizarEstadoBD(telefono, ctx);
                     sendWhatsappMessage(telefono,
                             "¿Para qué día querés? (por ejemplo 'el lunes')");
                     return;
@@ -239,6 +261,7 @@ public class NluOrchestrator {
                         System.out.println("ENTROOOOOOOOOOOO: 3");
                         pedirFaltantes(telefono, ctx);
                         contextos.put(telefono, ctx);
+                        sincronizarEstadoBD(telefono, ctx);
                         return;
                     }
 
@@ -259,6 +282,7 @@ public class NluOrchestrator {
                             ctx.esperandoConfirmacion = false;
                             ctx.esperandoConfirmacionAgendamiento = false;
                             contextos.put(telefono, ctx);
+                            sincronizarEstadoBD(telefono, ctx);
                             sendWhatsappMessage(telefono,
                                     "En ese horario no hay personal disponible 😕. " +
                                             "¿Querés que probemos otra hora? Decime solo la hora, por ejemplo: *a las 9*.");
@@ -283,7 +307,7 @@ public class NluOrchestrator {
 
                         // Persistir ANTES de responder
                         contextos.put(telefono, ctx);
-
+                        sincronizarEstadoBD(telefono, ctx);
                         sendWhatsappMessage(telefono,
                                 "En ese horario no tenemos personal disponible 😕. " +
                                         "¿Querés que probemos otro horario para *" + ctx.tratamientoPendiente + "* el *"
@@ -318,6 +342,7 @@ public class NluOrchestrator {
                     }
 
                     contextos.put(telefono, ctx);
+                    sincronizarEstadoBD(telefono, ctx);
                     sendWhatsappMessage(telefono, res.texto);
                     return;
                 }
@@ -341,6 +366,7 @@ public class NluOrchestrator {
                             // No tenemos una hora fiable → pedirla explícitamente
                             pedirFaltantes(telefono, ctx);
                             contextos.put(telefono, ctx);
+                            sincronizarEstadoBD(telefono, ctx);
                             return;
                         }
 
@@ -351,6 +377,7 @@ public class NluOrchestrator {
                                 + "*, ¿confirmo?");
                         ctx.esperandoConfirmacionAgendamiento = true;
                         contextos.put(telefono, ctx);
+                        sincronizarEstadoBD(telefono, ctx);
                         return;
                     }
 
@@ -358,6 +385,7 @@ public class NluOrchestrator {
                             "Genial 😊. Decime qué querés cambiar — la *fecha*, la *hora* o el *tratamiento*.");
                     ctx.esperandoConfirmacionAgendamiento = true;
                     contextos.put(telefono, ctx);
+                    sincronizarEstadoBD(telefono, ctx);
                     return;
                 }
                 // ==========================================================
@@ -383,6 +411,7 @@ public class NluOrchestrator {
                                         "* el *" + fechaStr + "* a las *" + horaStr + "*, ¿confirmo?");
 
                         contextos.put(telefono, ctx);
+                        sincronizarEstadoBD(telefono, ctx);
                         return;
                     }
 
@@ -394,6 +423,7 @@ public class NluOrchestrator {
                         if (horaFaltante(ctx)) {
                             pedirFaltantes(telefono, ctx);
                             contextos.put(telefono, ctx);
+                            sincronizarEstadoBD(telefono, ctx);
                             return;
                         }
 
@@ -405,6 +435,7 @@ public class NluOrchestrator {
                                         "* el *" + fechaStr + "* a las *" + horaStr + "*, ¿confirmo?");
 
                         contextos.put(telefono, ctx);
+                        sincronizarEstadoBD(telefono, ctx);
                         return;
                     }
 
@@ -426,6 +457,7 @@ public class NluOrchestrator {
                         if (ctx.fechaPendiente == null || horaFaltante(ctx)) {
                             pedirFaltantes(telefono, ctx);
                             contextos.put(telefono, ctx);
+                            sincronizarEstadoBD(telefono, ctx);
                             return;
                         }
                         sendWhatsappMessage(telefono,
@@ -436,6 +468,7 @@ public class NluOrchestrator {
                         ctx.esperandoConfirmacionAgendamiento = true;
                         ctx.ajustandoHorario = false; // <<< NUEVO
                         contextos.put(telefono, ctx);
+                        sincronizarEstadoBD(telefono, ctx);
                         return;
                     }
                 }
@@ -466,6 +499,7 @@ public class NluOrchestrator {
                         System.out.println("ENTROOOOOOOOOOOO: 9.4");
                         pedirFaltantes(telefono, ctx);
                         contextos.put(telefono, ctx);
+                        sincronizarEstadoBD(telefono, ctx);
                         return;
                     }
 
@@ -480,6 +514,7 @@ public class NluOrchestrator {
                     ctx.esperandoConfirmacionAgendamiento = true;
                     ctx.ajustandoHorario = false;
                     contextos.put(telefono, ctx);
+                    sincronizarEstadoBD(telefono, ctx);
                     return;
                 }
             }
@@ -505,6 +540,7 @@ public class NluOrchestrator {
             if (cliente != null && ctx.clienteId == null) {
                 ctx.clienteId = cliente.getId();
                 contextos.put(telefono, ctx);
+                sincronizarEstadoBD(telefono, ctx);
             }
 
             // 🚨 Si NO se encontró cliente por teléfono/documento y tampoco teníamos uno en
@@ -529,6 +565,7 @@ public class NluOrchestrator {
                 }
 
                 contextos.put(telefono, ctx);
+                sincronizarEstadoBD(telefono, ctx);
                 sendWhatsappMessage(telefono, "No pude identificarte todavía. ¿Podés decirme tu documento?");
                 return;
             }
@@ -538,6 +575,7 @@ public class NluOrchestrator {
             if (cliente != null && ctx.clienteId == null) {
                 ctx.clienteId = cliente.getId();
                 contextos.put(telefono, ctx);
+                sincronizarEstadoBD(telefono, ctx);
             }
 
             // ✅ Si NO tenemos cliente cargado en variable pero sí en contexto → leer de
@@ -556,6 +594,7 @@ public class NluOrchestrator {
             if (cliente != null) {
                 msg.setCliente(cliente);
                 ctx.clienteId = cliente.getId();
+                chatContextService.vincularClienteSiHaceFalta(telefono, cliente.getId());
                 System.out.println("✅ Cliente identificado: " + cliente.getNombre() + " (ID " + cliente.getId() + ")");
             } else {
                 // si aún no hay cliente, salimos
@@ -591,7 +630,7 @@ public class NluOrchestrator {
                 ctx.ultimaIntencionPendiente = null;
                 ctx.tratPendienteConsulta = null;
                 contextos.put(telefono, ctx);
-
+                sincronizarEstadoBD(telefono, ctx);
                 // Procesamos directamente la intención pendiente en el flujo interno
                 // y salimos para no mezclar este mensaje (solo documento) con una nueva
                 // interpretación del LLM.
@@ -609,6 +648,7 @@ public class NluOrchestrator {
                     if (ctx.ajustandoHorario) {
                         System.out.println("ENTROOOOOOOOOOOO: 12");
                         contextos.put(telefono, ctx);
+                        sincronizarEstadoBD(telefono, ctx);
                         sendWhatsappMessage(telefono,
                                 "Sigamos buscando otro horario para *" + ctx.tratamientoPendiente +
                                         "* el *" + ctx.fechaPendiente + "*. Decime otra hora 😊.");
@@ -643,6 +683,7 @@ public class NluOrchestrator {
                         pedirFaltantes(telefono, ctx);
                         ctx.ajustandoHorario = false;
                         contextos.put(telefono, ctx);
+                        sincronizarEstadoBD(telefono, ctx);
                         return;
                     }
 
@@ -691,6 +732,7 @@ public class NluOrchestrator {
                     ctx.esperandoConfirmacionAgendamiento = true;
                     ctx.ajustandoHorario = false;
                     contextos.put(telefono, ctx);
+                    sincronizarEstadoBD(telefono, ctx);
 
                     String hStr = ctx.horaPendiente.toString().substring(0, 5);
 
@@ -1165,15 +1207,29 @@ public class NluOrchestrator {
     // ===============================================================
     private void sendWhatsappMessage(String telefonoDestino, String texto) {
         try {
+            Long clienteId = null;
+
+            ConversacionContexto ctx = contextos.get(telefonoDestino);
+            if (ctx != null) {
+                clienteId = ctx.clienteId;
+            }
+
+            chatContextService.guardarMensajeAsistente(telefonoDestino, texto, clienteId);
+
             String url = "https://graph.facebook.com/v18.0/" + phoneNumberId + "/messages";
-            Map<String, Object> payload = Map.of("messaging_product", "whatsapp", "to",
-                    telefonoDestino, "type", "text", "text", Map.of("body", texto));
+
+            Map<String, Object> payload = Map.of(
+                    "messaging_product", "whatsapp",
+                    "to", telefonoDestino,
+                    "type", "text",
+                    "text", Map.of("body", texto));
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(whatsappToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
 
             http.postForEntity(url, new HttpEntity<>(payload, headers), String.class);
+
         } catch (Exception e) {
             System.err.println("❌ Error enviando mensaje a WhatsApp: " + e.getMessage());
         }
@@ -1687,6 +1743,41 @@ public class NluOrchestrator {
         }
 
         return null;
+    }
+
+    private void sincronizarEstadoBD(String telefono, ConversacionContexto ctx) {
+        try {
+            var estado = chatContextService.obtenerOCrearEstado(telefono);
+
+            estado.setIntent(ctx.ultimaIntencion);
+            estado.setFlujoActivo(ctx.ultimaIntencion);
+
+            estado.setTratamiento(ctx.tratamientoPendiente);
+            estado.setFecha(ctx.fechaPendiente);
+            estado.setHora(ctx.horaPendiente);
+
+            estado.setEsperandoConfirmacion(ctx.esperandoConfirmacionAgendamiento);
+
+            String esperando = null;
+
+            if (ctx.tratamientoPendiente == null && "agendar_sesion".equals(ctx.ultimaIntencion)) {
+                esperando = "tratamiento";
+            } else if (ctx.fechaPendiente == null && "agendar_sesion".equals(ctx.ultimaIntencion)) {
+                esperando = "fecha";
+            } else if (ctx.horaPendiente == null && "agendar_sesion".equals(ctx.ultimaIntencion)) {
+                esperando = "hora";
+            } else if (ctx.esperandoConfirmacionAgendamiento) {
+                esperando = "confirmacion";
+            }
+
+            estado.setEsperando(esperando);
+            estado.setAccionPendiente(esperando);
+
+            chatContextService.guardarEstado(estado);
+
+        } catch (Exception e) {
+            System.err.println("⚠️ No se pudo sincronizar estado BD: " + e.getMessage());
+        }
     }
 
 }
