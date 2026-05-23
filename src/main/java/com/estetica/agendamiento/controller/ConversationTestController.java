@@ -8,6 +8,9 @@ import com.estetica.agendamiento.service.ChatContextService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import com.estetica.agendamiento.service.FlowResult;
+import com.estetica.agendamiento.service.FlowService;
+
 import java.util.List;
 
 @RestController
@@ -17,6 +20,8 @@ public class ConversationTestController {
 
         private final ChatContextService chatContextService;
         private final ConversationLlmClient conversationLlmClient;
+
+        private final FlowService flowService;
 
         @PostMapping("/analyze")
         public ConversationAiResult analyze(@RequestBody TestConversationRequest request) {
@@ -29,6 +34,24 @@ public class ConversationTestController {
                                 request.mensaje(),
                                 estado,
                                 historial);
+        }
+
+        @PostMapping("/flow")
+        public FlowResult flow(@RequestBody TestConversationRequest request) {
+
+                ChatConversationState estado = chatContextService.obtenerOCrearEstado(request.telefono());
+
+                List<ChatMessage> historial = chatContextService.obtenerContextoReciente(request.telefono());
+
+                ConversationAiResult ai = conversationLlmClient.analizar(
+                                request.mensaje(),
+                                estado,
+                                historial);
+
+                return flowService.manejar(
+                                request.telefono(),
+                                estado,
+                                ai);
         }
 
         public record TestConversationRequest(

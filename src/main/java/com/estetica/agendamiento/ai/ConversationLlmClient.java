@@ -24,19 +24,17 @@ public class ConversationLlmClient {
     public ConversationAiResult analizar(
             String mensajeActual,
             ChatConversationState estado,
-            List<ChatMessage> historial
-    ) {
+            List<ChatMessage> historial) {
         try {
             String prompt = construirPrompt(mensajeActual, estado, historial);
 
             Map<String, Object> body = Map.of(
                     "model", "gpt-4.1-mini",
                     "temperature", 0.2,
-                    "messages", new Object[]{
+                    "messages", new Object[] {
                             Map.of("role", "system", "content", systemPrompt()),
                             Map.of("role", "user", "content", prompt)
-                    }
-            );
+                    });
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(openAiApiKey);
@@ -45,8 +43,7 @@ public class ConversationLlmClient {
             ResponseEntity<Map> resp = http.postForEntity(
                     "https://api.openai.com/v1/chat/completions",
                     new HttpEntity<>(body, headers),
-                    Map.class
-            );
+                    Map.class);
 
             Map<?, ?> choice = (Map<?, ?>) ((List<?>) resp.getBody().get("choices")).get(0);
             Map<?, ?> message = (Map<?, ?>) choice.get("message");
@@ -63,8 +60,7 @@ public class ConversationLlmClient {
             fallback.setIntent("conversacion_general");
             fallback.setTemaGeneral("error_ia");
             fallback.setRespuestaSugerida(
-                    "Tuve un inconveniente interpretando tu mensaje 😕. ¿Podés repetirlo de otra forma?"
-            );
+                    "Tuve un inconveniente interpretando tu mensaje 😕. ¿Podés repetirlo de otra forma?");
             return fallback;
         }
     }
@@ -78,9 +74,9 @@ public class ConversationLlmClient {
 
         if (json.startsWith("```")) {
             json = json.replaceAll("(?s)^```json\\s*", "")
-                       .replaceAll("(?s)^```\\s*", "")
-                       .replaceAll("```$", "")
-                       .trim();
+                    .replaceAll("(?s)^```\\s*", "")
+                    .replaceAll("```$", "")
+                    .trim();
         }
 
         return mapper.readValue(json, ConversationAiResult.class);
@@ -89,8 +85,7 @@ public class ConversationLlmClient {
     private String construirPrompt(
             String mensajeActual,
             ChatConversationState estado,
-            List<ChatMessage> historial
-    ) {
+            List<ChatMessage> historial) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("Fecha actual: ").append(LocalDate.now()).append("\n\n");
@@ -109,9 +104,9 @@ public class ConversationLlmClient {
         sb.append("HISTORIAL RECIENTE:\n");
         for (ChatMessage m : historial) {
             sb.append(m.getRole())
-              .append(": ")
-              .append(m.getContent())
-              .append("\n");
+                    .append(": ")
+                    .append(m.getContent())
+                    .append("\n");
         }
 
         sb.append("\nMENSAJE ACTUAL DEL USUARIO:\n");
@@ -136,8 +131,17 @@ public class ConversationLlmClient {
                 pero siempre debés reconducir hacia las funciones del sistema.
 
                 REGLA CRÍTICA:
-                Si existe flujoActivo y esperando, interpretá el mensaje del usuario dentro de ese flujo.
+                Si hay flujoActivo y esperando, interpretá el mensaje del usuario dentro de ese flujo.
                 No cambies de intención salvo que el usuario pida claramente empezar otra cosa.
+
+                Si el usuario dice claramente algo como:
+                - "mejor quiero cancelar"
+                - "olvidá eso, quiero agendar"
+                - "dejemos eso, quiero consultar sesiones"
+                entonces devolvé cambiarFlujo=true y el nuevo intent.
+
+                Si solo responde un dato corto como "Lipolaser", "mañana", "a las 15", "sí" o "no",
+                NO cambies de flujo.
 
                 No debés:
                 - inventar sesiones restantes,
@@ -148,7 +152,7 @@ public class ConversationLlmClient {
                 - confirmar agendamientos sin validación del backend.
 
                 Si el usuario pide recomendaciones estéticas, indicá que la recomendación final
-                debe hacerla un profesional de la clínica y ofrecé agendar una consulta o sesión.
+                debe hacerla un profesional de la clínica y ofrecé realizar tus funciones principales.
 
                 Fechas:
                 - Si el usuario dice "mañana", usar la fecha actual + 1 día.
