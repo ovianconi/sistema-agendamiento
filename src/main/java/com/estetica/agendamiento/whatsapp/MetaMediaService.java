@@ -10,9 +10,11 @@ import java.util.Map;
 @Service
 public class MetaMediaService {
 
-    // @Value("${meta.whatsapp.token}")
     @Value("${whatsapp.access-token}")
     private String whatsappToken;
+
+    @Value("${whatsapp.phone-number-id}")
+    private String phoneNumberId;
 
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -29,8 +31,7 @@ public class MetaMediaService {
             headers.setBearerAuth(whatsappToken);
             HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-            ResponseEntity<Map> resp =
-                    restTemplate.exchange(mediaUrlEndpoint, HttpMethod.GET, entity, Map.class);
+            ResponseEntity<Map> resp = restTemplate.exchange(mediaUrlEndpoint, HttpMethod.GET, entity, Map.class);
 
             if (!resp.getStatusCode().is2xxSuccessful() || resp.getBody() == null) {
                 System.err.println("⚠️ No se pudo obtener la URL del media: " + resp);
@@ -45,8 +46,7 @@ public class MetaMediaService {
 
             // Paso 2: descargar binario del audio
             HttpEntity<Void> downloadEntity = new HttpEntity<>(headers);
-            ResponseEntity<byte[]> fileResp =
-                    restTemplate.exchange(url, HttpMethod.GET, downloadEntity, byte[].class);
+            ResponseEntity<byte[]> fileResp = restTemplate.exchange(url, HttpMethod.GET, downloadEntity, byte[].class);
 
             if (!fileResp.getStatusCode().is2xxSuccessful()) {
                 System.err.println("⚠️ No se pudo descargar el archivo de audio desde Meta.");
@@ -65,8 +65,7 @@ public class MetaMediaService {
     // ============================================================
     public void sendWhatsappMessage(String to, String body) {
         try {
-            String url = GRAPH_BASE_URL + "874203452439069/messages"; // ⚠️ Reemplazar con tu
-                                                                      // phone_number_id
+            String url = GRAPH_BASE_URL + phoneNumberId + "/messages";
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(whatsappToken);

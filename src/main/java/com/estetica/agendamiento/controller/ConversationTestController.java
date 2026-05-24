@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.*;
 
 import com.estetica.agendamiento.service.FlowResult;
 import com.estetica.agendamiento.service.FlowService;
+import com.estetica.agendamiento.dto.WhatsappMessageDTO;
+import com.estetica.agendamiento.service.WhatsappConversationService;
 
 import java.util.List;
 
@@ -20,6 +22,7 @@ public class ConversationTestController {
 
         private final ChatContextService chatContextService;
         private final ConversationLlmClient conversationLlmClient;
+        private final WhatsappConversationService whatsappConversationService;
 
         private final FlowService flowService;
 
@@ -50,8 +53,20 @@ public class ConversationTestController {
 
                 return flowService.manejar(
                                 request.telefono(),
+                                request.mensaje(),
                                 estado,
                                 ai);
+        }
+
+        @PostMapping("/process")
+        public FlowResult process(@RequestBody TestConversationRequest request) {
+
+                WhatsappMessageDTO dto = new WhatsappMessageDTO();
+
+                dto.setTelefono(request.telefono());
+                dto.setTexto(request.mensaje());
+
+                return whatsappConversationService.procesarMensaje(dto);
         }
 
         public record TestConversationRequest(

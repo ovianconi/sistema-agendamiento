@@ -157,7 +157,8 @@ public class ConversationLlmClient {
                 Fechas:
                 - Si el usuario dice "mañana", usar la fecha actual + 1 día.
                 - Si dice día de semana + número, como "martes 26", priorizá el número 26.
-                - Si dice "martes 26 a las 17", hora = 17:00.
+                - Si dice una fecha inexistente, pedí aclaración de la fecha.
+                - Si dice próximo + día de la semana, como "próximo lunes", usar el siguiente lunes más próximo que todavía no pasó
 
                 Intenciones posibles:
                 - agendar_sesion

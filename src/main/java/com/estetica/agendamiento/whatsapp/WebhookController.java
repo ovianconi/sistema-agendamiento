@@ -1,11 +1,13 @@
 package com.estetica.agendamiento.whatsapp;
 
 import com.estetica.agendamiento.dto.WhatsappMessageDTO;
-import com.estetica.agendamiento.ai.OpenAiAudioClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.beans.factory.annotation.Value;
+
+import com.estetica.agendamiento.service.WhatsappConversationService;
+import com.estetica.agendamiento.service.FlowResult;
 
 import java.util.List;
 import java.util.Map;
@@ -18,10 +20,13 @@ public class WebhookController {
     private NluOrchestrator orchestrator;
 
     @Autowired
-    private MetaMediaService metaMediaService;
+    private WhatsappConversationService whatsappConversationService;
+
+    @Value("${whatsapp.conversation-v2.enabled:false}")
+    private boolean conversationV2Enabled;
 
     @Autowired
-    private OpenAiAudioClient audioClient;
+    private MetaMediaService metaMediaService;
 
     @Value("${whatsapp.verify-token}")
     private String verifyTokenConfig;
@@ -52,6 +57,8 @@ public class WebhookController {
         try {
             System.out.println("📦 Payload recibido desde Meta:");
             System.out.println(payload);
+
+            System.out.println("🧪 conversationV2Enabled = " + conversationV2Enabled);
 
             // 1️⃣ Validar tipo de objeto
             if (!"whatsapp_business_account".equals(payload.get("object"))) {
@@ -96,38 +103,15 @@ public class WebhookController {
                 WhatsappMessageDTO dto = new WhatsappMessageDTO();
                 dto.setTelefono(telefono);
                 dto.setTexto(texto);
-                orchestrator.processIncomingMessage(dto);
 
-                return ResponseEntity.ok("EVENT_RECEIVED");
-            }
-
-            // ===========================================================
-            // 🎧 CASO 2: AUDIO
-            // ===========================================================
-            if ("audio".equals(tipoMensaje) || "voice".equals(tipoMensaje)) {
-
-                Map<String, Object> audioData = (Map<String, Object>) message.get("audio");
-                if (audioData == null || !audioData.containsKey("id")) {
-                    metaMediaService.sendWhatsappMessage(telefono,
-                            "No pude procesar el audio 😅, ¿podés reenviarlo?");
-                    return ResponseEntity.ok("no audio id");
+                if (conversationV2Enabled) {
+                    System.out.println("✅ Usando Conversation V2");
+                    FlowResult result = whatsappConversationService.procesarMensaje(dto);
+                    metaMediaService.sendWhatsappMessage(telefono, result.getRespuesta());
+                } else {
+                    System.out.println("⚠️ Usando NluOrchestrator viejo");
+                    orchestrator.processIncomingMessage(dto);
                 }
-
-                String mediaId = (String) audioData.get("id");
-                byte[] audioBytes = metaMediaService.downloadMedia(mediaId);
-
-                if (audioBytes == null || audioBytes.length == 0) {
-                    metaMediaService.sendWhatsappMessage(telefono,
-                            "Ocurrió un error procesando el audio 😕, ¿podés escribirlo por texto?");
-                    return ResponseEntity.ok("download error");
-                }
-
-                String texto = audioClient.transcribe(audioBytes, "audio_" + telefono + ".ogg", "es");
-
-                WhatsappMessageDTO dto = new WhatsappMessageDTO();
-                dto.setTelefono(telefono);
-                dto.setTexto(texto);
-                orchestrator.processIncomingMessage(dto);
 
                 return ResponseEntity.ok("EVENT_RECEIVED");
             }

@@ -23,16 +23,30 @@ public class FlowService {
     private final SesionService sesionService;
     private final ClienteService clienteService;
 
-    public FlowResult manejar(String telefono, ChatConversationState estado, ConversationAiResult ai) {
+    public FlowResult manejar(String telefono, String mensajeOriginal, ChatConversationState estado,
+            ConversationAiResult ai) {
 
         if (ai == null) {
             return responderGeneral(telefono, estado,
                     "No pude interpretar bien tu mensaje 😕. ¿Podés repetirlo?");
         }
 
+        if (!estado.tieneFlujoActivo() && parecePedidoMultiple(mensajeOriginal)) {
+            estado.setFlujoActivo("consulta_multiple");
+            estado.setIntent("consulta_multiple");
+            estado.setEsperando("accion_inicial");
+            estado.setAccionPendiente("accion_inicial");
+            estado.setLastBotQuestion("¿Por cuál acción querés empezar?");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "Puedo ayudarte con más de una cosa 😊, pero vamos paso a paso para evitar errores. ¿Querés que empecemos por agendar, cancelar o consultar sesiones?",
+                    false);
+        }
+
         // Si hay flujo activo, respetamos el flujo antes que una intención nueva.
         if (estado.tieneFlujoActivo() && estado.estaEsperandoDato()) {
-            if (pideCambioExplicitoDeFlujo(ai, estado) && Boolean.TRUE.equals(ai.isCambiarFlujo())) {
+            if (pideCambioExplicitoDeFlujo(mensajeOriginal, ai, estado)) {
                 estado.limpiarFlujo();
                 chatContextService.guardarEstado(estado);
             } else {
@@ -56,6 +70,7 @@ public class FlowService {
         };
     }
 
+    // ver el tema de respuesta sugerida por la ia y sacar respuesta en duro
     private FlowResult iniciarAgendamiento(String telefono, ChatConversationState estado, ConversationAiResult ai) {
         estado.setFlujoActivo("agendar_sesion");
         estado.setIntent("agendar_sesion");
@@ -135,6 +150,33 @@ public class FlowService {
 
                 return new FlowResult("Sin problema 😊. ¿Qué querés cambiar: tratamiento, fecha u hora?", false);
             }
+        }
+
+        if ("consulta_multiple".equals(flujo)) {
+            String intent = normalizar(ai.getIntent());
+
+            estado.limpiarFlujo();
+            chatContextService.guardarEstado(estado);
+
+            if ("agendar_sesion".equals(intent)) {
+                return iniciarAgendamiento(telefono, estado, ai);
+            }
+
+            if ("cancelar_sesion".equals(intent)) {
+                return iniciarCancelacion(telefono, estado, ai);
+            }
+
+            if ("consultar_sesiones_restantes".equals(intent)) {
+                return iniciarConsultaSesiones(telefono, estado, ai);
+            }
+
+            estado.setFlujoActivo("consulta_multiple");
+            estado.setIntent("consulta_multiple");
+            estado.setEsperando("accion_inicial");
+            estado.setAccionPendiente("accion_inicial");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult("Decime por cuál querés empezar: agendar, cancelar o consultar sesiones.", false);
         }
 
         if ("agendar_sesion".equals(flujo)) {
@@ -241,8 +283,15 @@ public class FlowService {
         }
 
         if ("consulta_multiple".equals(intent)) {
+            estado.setFlujoActivo("consulta_multiple");
+            estado.setIntent("consulta_multiple");
+            estado.setEsperando("accion_inicial");
+            estado.setAccionPendiente("accion_inicial");
+            estado.setLastBotQuestion("¿Por cuál acción querés empezar?");
+            chatContextService.guardarEstado(estado);
+
             return new FlowResult(
-                    "Puedo ayudarte con eso 😊. Para hacerlo bien, vamos paso a paso: primero decime si querés consultar sesiones, agendar o cancelar.",
+                    "Puedo ayudarte con más de una cosa 😊, pero vamos paso a paso para evitar errores. ¿Querés que empecemos por agendar, cancelar o consultar sesiones?",
                     false);
         }
 
@@ -800,19 +849,70 @@ public class FlowService {
         return false;
     }
 
-    private boolean pideCambioExplicitoDeFlujo(ConversationAiResult ai, ChatConversationState estado) {
+    private boolean pideCambioExplicitoDeFlujo(
+            String mensajeOriginal,
+            ConversationAiResult ai,
+            ChatConversationState estado) {
         if (ai == null || estado == null || !estado.tieneFlujoActivo())
             return false;
 
         String intentNuevo = normalizar(ai.getIntent());
         String flujoActual = normalizar(estado.getFlujoActivo());
+        String msg = normalizar(mensajeOriginal);
 
         if (intentNuevo.isBlank() || intentNuevo.equals(flujoActual))
             return false;
 
-        return intentNuevo.equals("agendar_sesion")
+        boolean intentPrincipal = intentNuevo.equals("agendar_sesion")
                 || intentNuevo.equals("cancelar_sesion")
                 || intentNuevo.equals("consultar_sesiones_restantes");
+
+        if (!intentPrincipal)
+            return false;
+
+        boolean mensajeExplicito = msg.contains("agendar")
+                || msg.contains("reservar")
+                || msg.contains("cancelar")
+                || msg.contains("anular")
+                || msg.contains("cuanto")
+                || msg.contains("cuánto")
+                || msg.contains("sesiones")
+                || msg.contains("me queda")
+                || msg.contains("me quedan")
+                || msg.contains("sobra")
+                || msg.contains("sobran");
+
+        return mensajeExplicito;
+    }
+
+    private boolean parecePedidoMultiple(String texto) {
+        if (texto == null)
+            return false;
+
+        String t = normalizar(texto);
+
+        boolean pideAgendar = t.contains("agendar")
+                || t.contains("reservar")
+                || t.contains("turno");
+
+        boolean pideCancelar = t.contains("cancelar")
+                || t.contains("anular")
+                || t.contains("suspender");
+
+        boolean pideConsultar = t.contains("cuanto")
+                || t.contains("cuánto")
+                || t.contains("sesiones")
+                || t.contains("me queda");
+
+        int count = 0;
+        if (pideAgendar)
+            count++;
+        if (pideCancelar)
+            count++;
+        if (pideConsultar)
+            count++;
+
+        return count >= 2;
     }
 
 }

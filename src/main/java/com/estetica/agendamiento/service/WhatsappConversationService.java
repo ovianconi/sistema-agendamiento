@@ -46,6 +46,7 @@ public class WhatsappConversationService {
 
         FlowResult result = flowService.manejar(
                 telefono,
+                texto,
                 estado,
                 ai);
 
