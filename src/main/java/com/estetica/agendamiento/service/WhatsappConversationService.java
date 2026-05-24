@@ -9,6 +9,8 @@ import com.estetica.agendamiento.model.ChatMessage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import com.estetica.agendamiento.model.Cliente;
+
 import java.util.List;
 
 @Service
@@ -32,9 +34,16 @@ public class WhatsappConversationService {
 
         ChatConversationState estado = chatContextService.obtenerOCrearEstado(telefono);
 
-        if (cliente != null) {
-            chatContextService.vincularClienteSiHaceFalta(telefono, cliente.getId());
-            estado = chatContextService.obtenerOCrearEstado(telefono);
+        if (cliente == null
+                && estado.getCliente() == null
+                && "documento".equalsIgnoreCase(estado.getEsperando())) {
+
+            cliente = identificarClientePorDocumento(texto);
+
+            if (cliente != null) {
+                chatContextService.vincularClienteSiHaceFalta(telefono, cliente.getId());
+                estado = chatContextService.obtenerOCrearEstado(telefono);
+            }
         }
 
         List<ChatMessage> historial = chatContextService.obtenerContextoReciente(telefono);
@@ -66,6 +75,25 @@ public class WhatsappConversationService {
             return clienteService.getClienteByTelefono(normalizado)
                     .map(ClienteResponseDTO::fromEntity)
                     .orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private ClienteResponseDTO identificarClientePorDocumento(String texto) {
+        try {
+            if (texto == null)
+                return null;
+
+            String documento = texto.trim().replaceAll("\\D", "");
+
+            if (documento.isBlank())
+                return null;
+
+            Cliente cliente = clienteService.findEntityByDocumento(documento);
+
+            return ClienteResponseDTO.fromEntity(cliente);
+
         } catch (Exception e) {
             return null;
         }
