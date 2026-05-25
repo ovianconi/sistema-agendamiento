@@ -725,6 +725,17 @@ public class FlowService {
 
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "Error desconocido";
+            String lower = msg.toLowerCase();
+
+            if (lower.contains("solo puede cancelarse")) {
+                estado.limpiarFlujo();
+                chatContextService.guardarEstado(estado);
+
+                return new FlowResult(
+                        "La sesión solo puede cancelarse hasta 2 horas antes del horario agendado.",
+                        true);
+            }
+
             return new FlowResult("No pude cancelar la sesión: " + msg, false);
         }
     }
