@@ -120,9 +120,7 @@ public class FlowService {
         chatContextService.guardarEstado(estado);
 
         return new FlowResult(
-                "Me confirmás, ¿querés agendar *" + estado.getTratamiento()
-                        + "* el *" + formatearFecha(estado.getFecha())
-                        + "* a las *" + formatearHora(estado.getHora()) + "*?",
+                ai.getRespuestaSugerida(),
                 false);
     }
 
@@ -182,7 +180,7 @@ public class FlowService {
                 estado.setLastBotQuestion("¿Qué dato querés cambiar?");
                 chatContextService.guardarEstado(estado);
 
-                return new FlowResult("Sin problema 😊. ¿Qué querés cambiar: tratamiento, fecha u hora?", false);
+                return new FlowResult(ai.getRespuestaSugerida(), false);
             }
         }
 
