@@ -77,6 +77,7 @@ public class SecurityConfig {
                             "/api/tratamientos/search/**",
                             "/api/sesiones/dto/**",
                             "/api/clientes/*/tratamientos/*/sesiones-restantes",
+                            "/api/clientes/*/tratamientos-disponibles",
                             "/api/clientes/**",
                             "/api/clientes/by-telefono/**",
                             "/api/clientes/by-documento/**",

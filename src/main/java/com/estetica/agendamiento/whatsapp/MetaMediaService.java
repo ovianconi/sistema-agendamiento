@@ -5,6 +5,7 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -63,27 +64,28 @@ public class MetaMediaService {
     // ============================================================
     // 💬 Enviar mensaje de texto al usuario vía WhatsApp Cloud API
     // ============================================================
-    public void sendWhatsappMessage(String to, String body) {
+    public void sendWhatsappMessage(String telefonoDestino, String texto) {
         try {
             String url = GRAPH_BASE_URL + phoneNumberId + "/messages";
+
+            Map<String, Object> payload = Map.of(
+                    "messaging_product", "whatsapp",
+                    "to", telefonoDestino,
+                    "type", "text",
+                    "text", Map.of(
+                            "body", texto));
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(whatsappToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setAccept(List.of(MediaType.APPLICATION_JSON));
 
-            String payload = String.format("""
-                    {
-                        "messaging_product": "whatsapp",
-                        "to": "%s",
-                        "type": "text",
-                        "text": {"body": "%s"}
-                    }
-                    """, to, body.replace("\"", "\\\""));
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
 
-            HttpEntity<String> request = new HttpEntity<>(payload, headers);
-            ResponseEntity<String> resp = restTemplate.postForEntity(url, request, String.class);
+            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
 
-            System.out.println("📤 Enviado a WhatsApp: " + body + " → " + resp.getStatusCode());
+            System.out.println("✅ Mensaje enviado a WhatsApp: " + response.getBody());
+
         } catch (Exception e) {
             System.err.println("❌ Error al enviar mensaje a WhatsApp: " + e.getMessage());
         }

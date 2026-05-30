@@ -10,6 +10,7 @@ import com.estetica.agendamiento.dto.SesionRequestDTO;
 import com.estetica.agendamiento.model.Sesion;
 import java.util.List;
 import com.estetica.agendamiento.dto.SesionResponseDTO;
+import com.estetica.agendamiento.dto.TratamientoDisponibleDTO;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -66,6 +67,8 @@ public class FlowService {
             case "agradecimiento" -> responderGeneral(telefono, estado,
                     textoONulo(ai.getRespuestaSugerida(),
                             "¡De nada! 😊 Si querés, puedo ayudarte a consultar, agendar o cancelar una sesión."));
+            case "reprogramar_sesion" -> iniciarReprogramacion(telefono, estado, ai);
+            case "consultar_tratamientos_disponibles" -> consultarTratamientosDisponibles(estado);
             default -> manejarConversacionGeneral(telefono, estado, ai);
         };
     }
@@ -129,6 +132,37 @@ public class FlowService {
 
         if (esInterrupcionConversacional(ai)) {
             return responderInterrupcionYRetomar(estado, ai);
+        }
+
+        if ("reprogramar_sesion".equals(flujo)) {
+            if (Boolean.TRUE.equals(ai.getConfirmacion()) || "confirmar".equals(normalizar(ai.getIntent()))) {
+                estado.limpiarFlujo();
+                chatContextService.guardarEstado(estado);
+
+                estado.setFlujoActivo("cancelar_sesion");
+                estado.setIntent("cancelar_sesion");
+                estado.setEsperando("fecha");
+                estado.setAccionPendiente("fecha");
+                estado.setLastBotQuestion("¿De qué fecha es la sesión que querés cancelar?");
+                chatContextService.guardarEstado(estado);
+
+                return new FlowResult("Perfecto. ¿De qué fecha es la sesión que querés cancelar?", false);
+            }
+
+            if (Boolean.FALSE.equals(ai.getConfirmacion()) || "negar".equals(normalizar(ai.getIntent()))) {
+                estado.limpiarFlujo();
+                chatContextService.guardarEstado(estado);
+
+                return new FlowResult(
+                        "Entendido 😊. No hago ningún cambio. Si querés, puedo ayudarte a consultar, agendar o cancelar una sesión.",
+                        true);
+            }
+
+            return new FlowResult("¿Querés empezar cancelando la sesión actual?", false);
+        }
+
+        if ("consultar_tratamientos_disponibles".equals(flujo)) {
+            return consultarTratamientosDisponibles(estado);
         }
 
         // Confirmación o negación
@@ -924,6 +958,61 @@ public class FlowService {
             count++;
 
         return count >= 2;
+    }
+
+    private FlowResult iniciarReprogramacion(String telefono, ChatConversationState estado, ConversationAiResult ai) {
+        estado.setFlujoActivo("reprogramar_sesion");
+        estado.setIntent("reprogramar_sesion");
+        estado.setEsperando("confirmar_cancelacion_previa");
+        estado.setAccionPendiente("confirmar_cancelacion_previa");
+        estado.setEsperandoConfirmacion(false);
+        estado.setLastBotQuestion("¿Querés empezar cancelando la sesión actual?");
+        chatContextService.guardarEstado(estado);
+
+        return new FlowResult(
+                "Puedo ayudarte a reprogramar 😊. Para evitar errores, primero cancelamos la sesión actual y luego agendamos una nueva. ¿Querés empezar cancelando la sesión que querés mover?",
+                false);
+    }
+
+    private FlowResult consultarTratamientosDisponibles(ChatConversationState estado) {
+        try {
+            if (estado.getCliente() == null || estado.getCliente().getId() == null) {
+                estado.setFlujoActivo("consultar_tratamientos_disponibles");
+                estado.setIntent("consultar_tratamientos_disponibles");
+                estado.setEsperando("documento");
+                estado.setAccionPendiente("documento");
+                chatContextService.guardarEstado(estado);
+
+                return new FlowResult(
+                        "Necesito identificarte antes de consultar tus tratamientos. ¿Podés decirme tu documento?",
+                        false);
+            }
+
+            List<TratamientoDisponibleDTO> disponibles = clienteService
+                    .obtenerTratamientosDisponibles(estado.getCliente().getId());
+
+            estado.limpiarFlujo();
+            chatContextService.guardarEstado(estado);
+
+            if (disponibles == null || disponibles.isEmpty()) {
+                return new FlowResult(
+                        "No encontré tratamientos disponibles con sesiones restantes vigentes.",
+                        true);
+            }
+
+            String lista = disponibles.stream()
+                    .map(t -> "• " + t.getNombre() + ": " + t.getSesionesRestantes() + " sesiones")
+                    .collect(java.util.stream.Collectors.joining("\n"));
+
+            return new FlowResult(
+                    "Tenés disponibles:\n" + lista,
+                    true);
+
+        } catch (Exception e) {
+            return new FlowResult(
+                    "No pude consultar tus tratamientos disponibles: " + e.getMessage(),
+                    false);
+        }
     }
 
 }

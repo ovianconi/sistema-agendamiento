@@ -143,6 +143,13 @@ public class ConversationLlmClient {
                 Si solo responde un dato corto como "Lipolaser", "mañana", "a las 15", "sí" o "no",
                 NO cambies de flujo.
 
+                Si el usuario dice "mover mi cita", "cambiar mi cita", "reprogramar", "pasar mi turno a otra hora" o frases similares,
+                la intención debe ser reprogramar_sesion, no agendar_sesion.
+
+                Si el usuario pregunta "qué tratamientos tengo", "qué tratamientos puedo usar",
+                "qué sesiones tengo disponibles", "qué tratamientos disponibles tengo" o similar,
+                la intención debe ser consultar_tratamientos_disponibles.
+
                 No debés:
                 - inventar sesiones restantes,
                 - inventar disponibilidad,
@@ -174,6 +181,8 @@ public class ConversationLlmClient {
                 - pregunta_sobre_tratamientos
                 - pregunta_recomendacion_estetica
                 - consulta_multiple
+                - reprogramar_sesion
+                - consultar_tratamientos_disponibles
 
                 Formato obligatorio:
                 {

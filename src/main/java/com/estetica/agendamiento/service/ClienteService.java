@@ -11,6 +11,8 @@ import com.estetica.agendamiento.repository.TratamientoRepository;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
+import com.estetica.agendamiento.dto.TratamientoDisponibleDTO;
+
 import java.time.LocalDate;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -141,5 +143,16 @@ public class ClienteService {
                 .findByClienteAndTratamientoConVigencia(clienteId, tratamientoId, LocalDate.now())
                 .map(ClientePaqueteTratamiento::getSesionesRestantes)
                 .orElse(0);
+    }
+
+    public List<TratamientoDisponibleDTO> obtenerTratamientosDisponibles(Long clienteId) {
+        return clientePaqueteTratamientoRepository
+                .encontrarVigentesConSaldo(clienteId, LocalDate.now())
+                .stream()
+                .map(cpt -> new TratamientoDisponibleDTO(
+                        cpt.getTratamiento().getId(),
+                        cpt.getTratamiento().getNombre(),
+                        cpt.getSesionesRestantes()))
+                .toList();
     }
 }
