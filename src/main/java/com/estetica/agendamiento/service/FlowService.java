@@ -85,7 +85,7 @@ public class FlowService {
             estado.setAccionPendiente("tratamiento");
             estado.setLastBotQuestion("¿Qué tratamiento querés agendar?");
             chatContextService.guardarEstado(estado);
-            return new FlowResult("Claro 😊. ¿Qué tratamiento querés agendar?", false);
+            return new FlowResult(ai.getRespuestaSugerida(), false);
         }
 
         if (estado.getFecha() == null && estado.getHora() == null) {
@@ -261,6 +261,7 @@ public class FlowService {
         estado.setIntent("cancelar_sesion");
 
         aplicarDatosDetectados(estado, ai);
+        normalizarEsperaCancelacion(estado);
 
         if (estado.getFecha() == null) {
             estado.setEsperando("fecha");
@@ -396,6 +397,28 @@ public class FlowService {
             estado.setFecha(parseFecha(ai.getFecha()));
         if (!estaVacio(ai.getHora()))
             estado.setHora(parseHora(ai.getHora()));
+    }
+
+    private void normalizarEsperaCancelacion(ChatConversationState estado) {
+        if (!"cancelar_sesion".equals(normalizar(estado.getFlujoActivo())))
+            return;
+
+        if (estado.getFecha() == null) {
+            estado.setEsperando("fecha");
+            estado.setAccionPendiente("fecha");
+            return;
+        }
+
+        if (estado.getHora() == null && estaVacio(estado.getTratamiento())) {
+            estado.setEsperando("hora_o_tratamiento");
+            estado.setAccionPendiente("hora_o_tratamiento");
+            return;
+        }
+
+        if (estado.getHora() == null && !estaVacio(estado.getTratamiento())) {
+            estado.setEsperando("hora");
+            estado.setAccionPendiente("hora");
+        }
     }
 
     private LocalDate parseFecha(String fecha) {
@@ -768,6 +791,19 @@ public class FlowService {
                         true);
             }
 
+            if (lower.contains("no se encontró sesión pendiente")
+                    || lower.contains("no se encontro sesion pendiente")
+                    || lower.contains("no se encontró sesion pendiente")
+                    || lower.contains("no se encontro sesión pendiente")) {
+
+                estado.limpiarFlujo();
+                chatContextService.guardarEstado(estado);
+
+                return new FlowResult(
+                        "No encontré una sesión pendiente en esa fecha y hora.",
+                        true);
+            }
+
             return new FlowResult("No pude cancelar la sesión: " + msg, false);
         }
     }
@@ -908,7 +944,8 @@ public class FlowService {
 
         boolean intentPrincipal = intentNuevo.equals("agendar_sesion")
                 || intentNuevo.equals("cancelar_sesion")
-                || intentNuevo.equals("consultar_sesiones_restantes");
+                || intentNuevo.equals("consultar_sesiones_restantes")
+                || intentNuevo.equals("consultar_tratamientos_disponibles");
 
         if (!intentPrincipal)
             return false;
@@ -922,8 +959,10 @@ public class FlowService {
                 || msg.contains("sesiones")
                 || msg.contains("me queda")
                 || msg.contains("me quedan")
-                || msg.contains("sobra")
-                || msg.contains("sobran");
+                || msg.contains("tratamientos tengo")
+                || msg.contains("qué tengo")
+                || msg.contains("que tengo")
+                || msg.contains("tratamientos disponibles");
 
         return mensajeExplicito;
     }

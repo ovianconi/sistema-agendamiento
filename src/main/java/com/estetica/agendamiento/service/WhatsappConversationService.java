@@ -71,7 +71,10 @@ public class WhatsappConversationService {
 
     private ClienteResponseDTO identificarClientePorTelefono(String telefonoCrudo) {
         try {
+
             String normalizado = normalizePhone(telefonoCrudo);
+            System.out.println("☎️ telefonoCrudo = " + telefonoCrudo);
+            System.out.println("☎️ telefonoNormalizado = " + normalizado);
             return clienteService.getClienteByTelefono(normalizado)
                     .map(ClienteResponseDTO::fromEntity)
                     .orElse(null);
