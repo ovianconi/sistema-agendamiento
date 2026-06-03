@@ -16,8 +16,8 @@ import java.util.Map;
 @RequestMapping("${app.api.prefix}/webhooks/whatsapp")
 public class WebhookController {
 
-    @Autowired
-    private NluOrchestrator orchestrator;
+    // @Autowired
+    // private NluOrchestrator orchestrator;
 
     @Autowired
     private WhatsappConversationService whatsappConversationService;
@@ -104,14 +104,14 @@ public class WebhookController {
                 dto.setTelefono(telefono);
                 dto.setTexto(texto);
 
-                if (conversationV2Enabled) {
-                    System.out.println("✅ Usando Conversation V2");
-                    FlowResult result = whatsappConversationService.procesarMensaje(dto);
-                    metaMediaService.sendWhatsappMessage(telefono, result.getRespuesta());
-                } else {
-                    System.out.println("⚠️ Usando NluOrchestrator viejo");
-                    orchestrator.processIncomingMessage(dto);
-                }
+                // if (conversationV2Enabled) {
+                System.out.println("✅ Usando Conversation V2");
+                FlowResult result = whatsappConversationService.procesarMensaje(dto);
+                metaMediaService.sendWhatsappMessage(telefono, result.getRespuesta());
+                // } else {
+                // System.out.println("⚠️ Usando NluOrchestrator viejo");
+                // orchestrator.processIncomingMessage(dto);
+                // }
 
                 return ResponseEntity.ok("EVENT_RECEIVED");
             }
