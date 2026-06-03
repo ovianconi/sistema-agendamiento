@@ -73,10 +73,32 @@ public class FlowService {
         };
     }
 
+    private void prepararAgendamientoSinCliente(ChatConversationState estado) {
+        if (estado.getCliente() != null && estado.getCliente().getId() != null) {
+            return;
+        }
+
+        estado.setTratamiento(null);
+        estado.setFecha(null);
+        estado.setHora(null);
+        estado.setEsperandoConfirmacion(false);
+        estado.setAccionPendiente("documento");
+        estado.setEsperando("documento");
+    }
+
     // ver el tema de respuesta sugerida por la ia y sacar respuesta en duro
     private FlowResult iniciarAgendamiento(String telefono, ChatConversationState estado, ConversationAiResult ai) {
         estado.setFlujoActivo("agendar_sesion");
         estado.setIntent("agendar_sesion");
+
+        if (estado.getCliente() == null || estado.getCliente().getId() == null) {
+            prepararAgendamientoSinCliente(estado);
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "Para agendar una sesión necesito identificarte. Decime tu número de documento, por favor.",
+                    false);
+        }
 
         aplicarDatosDetectados(estado, ai);
 
@@ -705,12 +727,15 @@ public class FlowService {
                         .toList();
 
                 if (coincidencias.isEmpty()) {
+                    String tratamiento = estado.getTratamiento();
+                    String fecha = formatearFecha(estado.getFecha());
+
                     estado.limpiarFlujo();
                     chatContextService.guardarEstado(estado);
 
                     return new FlowResult(
-                            "No encontré una sesión de " + estado.getTratamiento()
-                                    + " para el " + formatearFecha(estado.getFecha()) + ".",
+                            "No encontré una sesión pendiente de " + tratamiento
+                                    + " para el " + fecha + ".",
                             true);
                 }
 

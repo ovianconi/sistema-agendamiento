@@ -43,6 +43,16 @@ public class WhatsappConversationService {
             if (cliente != null) {
                 chatContextService.vincularClienteSiHaceFalta(telefono, cliente.getId());
                 estado = chatContextService.obtenerOCrearEstado(telefono);
+            } else if (pareceDocumento(texto)) {
+                estado.limpiarFlujo();
+                chatContextService.guardarEstado(estado);
+
+                String respuesta = "No encontré un cliente registrado con ese documento. "
+                        + "Verificá si está bien escrito o comunicate con la clínica para registrar tus datos.";
+
+                chatContextService.guardarMensajeAsistente(telefono, respuesta, null);
+
+                return new FlowResult(respuesta, true);
             }
         }
 
@@ -69,6 +79,15 @@ public class WhatsappConversationService {
         return result;
     }
 
+    private boolean pareceDocumento(String texto) {
+        if (texto == null)
+            return false;
+
+        String limpio = texto.trim().replaceAll("\\D", "");
+
+        return limpio.length() >= 5;
+    }
+
     private ClienteResponseDTO identificarClientePorTelefono(String telefonoCrudo) {
         try {
 
@@ -89,6 +108,7 @@ public class WhatsappConversationService {
                 return null;
 
             String documento = texto.trim().replaceAll("\\D", "");
+            System.out.println("🪪 Buscando cliente por documento = " + documento);
 
             if (documento.isBlank())
                 return null;
