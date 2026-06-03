@@ -32,6 +32,18 @@ public class FlowService {
                     "No pude interpretar bien tu mensaje 😕. ¿Podés repetirlo?");
         }
 
+        if (estado.tieneFlujoActivo()
+                && ("abandonar_flujo".equals(normalizar(ai.getIntent()))
+                        || pareceAbandonoEvidente(mensajeOriginal))) {
+
+            estado.limpiarFlujo();
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "Entendido, dejamos de lado este proceso. Si necesitás algo más, estoy para ayudarte.",
+                    true);
+        }
+
         if (!estado.tieneFlujoActivo() && parecePedidoMultiple(mensajeOriginal)) {
             estado.setFlujoActivo("consulta_multiple");
             estado.setIntent("consulta_multiple");
@@ -61,16 +73,42 @@ public class FlowService {
             case "agendar_sesion" -> iniciarAgendamiento(telefono, estado, ai);
             case "consultar_sesiones_restantes" -> iniciarConsultaSesiones(telefono, estado, ai);
             case "cancelar_sesion" -> iniciarCancelacion(telefono, estado, ai);
+            case "reprogramar_sesion" -> iniciarReprogramacion(telefono, estado, ai);
+            case "consultar_tratamientos_disponibles" -> consultarTratamientosDisponibles(estado);
+
+            case "abandonar_flujo" -> abandonarFlujo(estado);
+
             case "saludo" -> responderGeneral(telefono, estado,
                     textoONulo(ai.getRespuestaSugerida(),
                             "¡Hola! 😊 Puedo ayudarte a consultar sesiones, agendar o cancelar una cita."));
+
             case "agradecimiento" -> responderGeneral(telefono, estado,
                     textoONulo(ai.getRespuestaSugerida(),
                             "¡De nada! 😊 Si querés, puedo ayudarte a consultar, agendar o cancelar una sesión."));
-            case "reprogramar_sesion" -> iniciarReprogramacion(telefono, estado, ai);
-            case "consultar_tratamientos_disponibles" -> consultarTratamientosDisponibles(estado);
+
             default -> manejarConversacionGeneral(telefono, estado, ai);
         };
+    }
+
+    private boolean pareceAbandonoEvidente(String texto) {
+        String m = normalizar(texto);
+
+        return m.contains("deja nomas")
+                || m.contains("dejá nomás")
+                || m.contains("dejalo")
+                || m.contains("déjalo")
+                || m.contains("no importa")
+                || m.contains("ya no quiero")
+                || m.contains("gracias igual");
+    }
+
+    private FlowResult abandonarFlujo(ChatConversationState estado) {
+        estado.limpiarFlujo();
+        chatContextService.guardarEstado(estado);
+
+        return new FlowResult(
+                "Entendido, dejamos de lado este proceso. Si necesitás algo más, estoy para ayudarte.",
+                true);
     }
 
     private void prepararAgendamientoSinCliente(ChatConversationState estado) {
