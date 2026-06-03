@@ -503,7 +503,13 @@ public class FlowService {
     private FlowResult confirmarAgendamiento(String telefono, ChatConversationState estado) {
         try {
             if (estado.getCliente() == null || estado.getCliente().getId() == null) {
-                return new FlowResult("Necesito identificarte antes de agendar. ¿Podés decirme tu documento?", false);
+                estado.setEsperando("documento");
+                estado.setAccionPendiente("documento");
+                chatContextService.guardarEstado(estado);
+
+                return new FlowResult(
+                        "Necesito identificarte antes de agendar. ¿Podés decirme tu documento?",
+                        false);
             }
 
             if (estaVacio(estado.getTratamiento())) {
@@ -957,39 +963,56 @@ public class FlowService {
             String mensajeOriginal,
             ConversationAiResult ai,
             ChatConversationState estado) {
-        if (ai == null || estado == null || !estado.tieneFlujoActivo())
+        if (ai == null || estado == null || !estado.tieneFlujoActivo()) {
             return false;
+        }
 
         String intentNuevo = normalizar(ai.getIntent());
         String flujoActual = normalizar(estado.getFlujoActivo());
         String msg = normalizar(mensajeOriginal);
 
-        if (intentNuevo.isBlank() || intentNuevo.equals(flujoActual))
+        if (intentNuevo.isBlank() || intentNuevo.equals(flujoActual)) {
             return false;
+        }
 
         boolean intentPrincipal = intentNuevo.equals("agendar_sesion")
                 || intentNuevo.equals("cancelar_sesion")
                 || intentNuevo.equals("consultar_sesiones_restantes")
                 || intentNuevo.equals("consultar_tratamientos_disponibles");
 
-        if (!intentPrincipal)
+        if (!intentPrincipal) {
+            return false;
+        }
+
+        boolean cambioIA = Boolean.TRUE.equals(ai.isCambiarFlujo());
+
+        boolean cambioSeguroPorIntent = cambioIA && !intentNuevo.equals(flujoActual);
+
+        boolean cambioPorFraseObvia = mensajePareceCambioExplicito(msg);
+
+        return cambioSeguroPorIntent || cambioPorFraseObvia;
+    }
+
+    private boolean mensajePareceCambioExplicito(String msg) {
+        if (estaVacio(msg))
             return false;
 
-        boolean mensajeExplicito = msg.contains("agendar")
-                || msg.contains("reservar")
-                || msg.contains("cancelar")
-                || msg.contains("anular")
-                || msg.contains("cuanto")
-                || msg.contains("cuánto")
-                || msg.contains("sesiones")
-                || msg.contains("me queda")
-                || msg.contains("me quedan")
-                || msg.contains("tratamientos tengo")
-                || msg.contains("qué tengo")
-                || msg.contains("que tengo")
-                || msg.contains("tratamientos disponibles");
-
-        return mensajeExplicito;
+        return msg.contains("quiero agendar")
+                || msg.contains("quiero reservar")
+                || msg.contains("quiero cancelar")
+                || msg.contains("quiero consultar")
+                || msg.contains("cuantas sesiones")
+                || msg.contains("cuántas sesiones")
+                || msg.contains("que tratamientos tengo")
+                || msg.contains("qué tratamientos tengo")
+                || msg.contains("que puedo usar")
+                || msg.contains("qué puedo usar")
+                || msg.contains("mis tratamientos")
+                || msg.contains("mis sesiones")
+                || msg.contains("mejor quiero")
+                || msg.contains("dejemos eso")
+                || msg.contains("olvida eso")
+                || msg.contains("olvidá eso");
     }
 
     private boolean parecePedidoMultiple(String texto) {
@@ -1058,7 +1081,9 @@ public class FlowService {
 
             if (disponibles == null || disponibles.isEmpty()) {
                 return new FlowResult(
-                        "No encontré tratamientos disponibles con sesiones restantes vigentes.",
+                        "No encontré tratamientos disponibles con sesiones restantes vigentes para tu cuenta. "
+                                + "Puede ser que no tengas paquetes activos, que estén vencidos o que ya no tengan sesiones restantes. "
+                                + "Si creés que esto es un error, comunicate con la clínica para verificar tus datos.",
                         true);
             }
 

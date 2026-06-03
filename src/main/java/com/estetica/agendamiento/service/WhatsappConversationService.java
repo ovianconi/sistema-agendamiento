@@ -38,21 +38,23 @@ public class WhatsappConversationService {
                 && estado.getCliente() == null
                 && "documento".equalsIgnoreCase(estado.getEsperando())) {
 
-            cliente = identificarClientePorDocumento(texto);
+            if (pareceDocumento(texto)) {
+                cliente = identificarClientePorDocumento(texto);
 
-            if (cliente != null) {
-                chatContextService.vincularClienteSiHaceFalta(telefono, cliente.getId());
-                estado = chatContextService.obtenerOCrearEstado(telefono);
-            } else if (pareceDocumento(texto)) {
-                estado.limpiarFlujo();
-                chatContextService.guardarEstado(estado);
+                if (cliente != null) {
+                    chatContextService.vincularClienteSiHaceFalta(telefono, cliente.getId());
+                    estado = chatContextService.obtenerOCrearEstado(telefono);
+                } else {
+                    estado.limpiarFlujo();
+                    chatContextService.guardarEstado(estado);
 
-                String respuesta = "No encontré un cliente registrado con ese documento. "
-                        + "Verificá si está bien escrito o comunicate con la clínica para registrar tus datos.";
+                    String respuesta = "No encontré un cliente registrado con ese documento. "
+                            + "Verificá si está bien escrito o comunicate con la clínica para registrar tus datos.";
 
-                chatContextService.guardarMensajeAsistente(telefono, respuesta, null);
+                    chatContextService.guardarMensajeAsistente(telefono, respuesta, null);
 
-                return new FlowResult(respuesta, true);
+                    return new FlowResult(respuesta, true);
+                }
             }
         }
 
