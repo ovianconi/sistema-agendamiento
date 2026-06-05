@@ -26,6 +26,10 @@ public class WhatsappConversationService {
         String telefono = msg.getTelefono();
         String texto = msg.getTexto();
 
+        System.out.println("🟢 TEXTO WHATSAPP RAW = [" + texto + "]");
+        System.out.println("🟢 TEXTO LENGTH = " + (texto != null ? texto.length() : null));
+        System.out.println("🟢 TEXTO DIGITOS = [" + (texto != null ? texto.replaceAll("\\D", "") : null) + "]");
+
         ClienteResponseDTO cliente = identificarClientePorTelefono(telefono);
 
         Long clienteId = cliente != null ? cliente.getId() : null;
@@ -34,27 +38,33 @@ public class WhatsappConversationService {
 
         ChatConversationState estado = chatContextService.obtenerOCrearEstado(telefono);
 
-        if (cliente == null
-                && estado.getCliente() == null
-                && "documento".equalsIgnoreCase(estado.getEsperando())) {
+        if (cliente != null && estado.getCliente() == null) {
+            chatContextService.vincularClienteSiHaceFalta(telefono, cliente.getId());
+            estado = chatContextService.obtenerOCrearEstado(telefono);
+        }
 
-            if (pareceDocumento(texto)) {
-                cliente = identificarClientePorDocumento(texto);
+        String digitosTexto = texto != null ? texto.replaceAll("\\D", "") : "";
 
-                if (cliente != null) {
-                    chatContextService.vincularClienteSiHaceFalta(telefono, cliente.getId());
-                    estado = chatContextService.obtenerOCrearEstado(telefono);
-                } else {
-                    estado.limpiarFlujo();
-                    chatContextService.guardarEstado(estado);
+        // Si no hay cliente identificado y el usuario envía algo que parece documento,
+        // intentamos identificarlo sin depender de estado.getEsperando().
+        if (estado.getCliente() == null && digitosTexto.length() >= 5) {
 
-                    String respuesta = "No encontré un cliente registrado con ese documento. "
-                            + "Verificá si está bien escrito o comunicate con la clínica para registrar tus datos.";
+            cliente = identificarClientePorDocumento(digitosTexto);
 
-                    chatContextService.guardarMensajeAsistente(telefono, respuesta, null);
+            if (cliente != null) {
+                chatContextService.vincularClienteSiHaceFalta(telefono, cliente.getId());
+                estado = chatContextService.obtenerOCrearEstado(telefono);
+            } else {
+                System.out.println("🛑 DOCUMENTO NO ENCONTRADO - CORTANDO FLUJO");
+                estado.limpiarFlujo();
+                chatContextService.guardarEstado(estado);
 
-                    return new FlowResult(respuesta, true);
-                }
+                String respuesta = "No encontré un cliente registrado con ese documento. "
+                        + "Verificá si está bien escrito o comunicate con la clínica para registrar tus datos.";
+
+                chatContextService.guardarMensajeAsistente(telefono, respuesta, null);
+
+                return new FlowResult(respuesta, true);
             }
         }
 

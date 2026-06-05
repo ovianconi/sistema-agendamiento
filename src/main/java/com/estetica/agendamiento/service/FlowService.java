@@ -227,7 +227,7 @@ public class FlowService {
         if ("confirmacion".equals(esperando)) {
             if (Boolean.TRUE.equals(ai.getConfirmacion()) || "confirmar".equals(normalizar(ai.getIntent()))) {
                 if ("agendar_sesion".equals(normalizar(estado.getFlujoActivo()))) {
-                    return confirmarAgendamiento(telefono, estado);
+                    return confirmarAgendamiento(telefono, estado, ai);
                 }
 
                 return new FlowResult("Confirmado.", false);
@@ -286,7 +286,7 @@ public class FlowService {
                 return new FlowResult("¿De qué tratamiento querés consultar tus sesiones?", false);
             }
 
-            return consultarSesionesRestantes(estado);
+            return consultarSesionesRestantes(estado, ai);
         }
 
         if ("cancelar_sesion".equals(flujo)) {
@@ -313,7 +313,7 @@ public class FlowService {
 
         chatContextService.guardarEstado(estado);
 
-        return consultarSesionesRestantes(estado);
+        return consultarSesionesRestantes(estado, ai);
     }
 
     private FlowResult iniciarCancelacion(String telefono, ChatConversationState estado, ConversationAiResult ai) {
@@ -341,7 +341,7 @@ public class FlowService {
 
         chatContextService.guardarEstado(estado);
 
-        return cancelarSesion(estado);
+        return cancelarSesion(estado, ai);
     }
 
     private FlowResult manejarConversacionGeneral(String telefono, ChatConversationState estado,
@@ -538,7 +538,7 @@ public class FlowService {
         return estaVacio(valor) ? fallback : valor;
     }
 
-    private FlowResult confirmarAgendamiento(String telefono, ChatConversationState estado) {
+    private FlowResult confirmarAgendamiento(String telefono, ChatConversationState estado, ConversationAiResult ai) {
         try {
             if (estado.getCliente() == null || estado.getCliente().getId() == null) {
                 estado.setEsperando("documento");
@@ -577,8 +577,7 @@ public class FlowService {
                 estado.setEsperando("tratamiento");
                 estado.setAccionPendiente("tratamiento");
                 chatContextService.guardarEstado(estado);
-                return new FlowResult("No identifiqué el tratamiento *" + estado.getTratamiento()
-                        + "*. ¿Podés repetir el nombre?", false);
+                return new FlowResult(ai.getRespuestaSugerida(), false);
             }
 
             SesionRequestDTO dto = new SesionRequestDTO();
@@ -638,7 +637,7 @@ public class FlowService {
         }
     }
 
-    private FlowResult consultarSesionesRestantes(ChatConversationState estado) {
+    private FlowResult consultarSesionesRestantes(ChatConversationState estado, ConversationAiResult ai) {
         try {
             if (estado.getCliente() == null || estado.getCliente().getId() == null) {
                 estado.setEsperando("documento");
@@ -667,10 +666,7 @@ public class FlowService {
                 estado.setAccionPendiente("tratamiento");
                 chatContextService.guardarEstado(estado);
 
-                return new FlowResult(
-                        "No identifiqué el tratamiento *" + estado.getTratamiento()
-                                + "*. ¿Podés repetir el nombre?",
-                        false);
+                return new FlowResult(ai.getRespuestaSugerida(), false);
             }
 
             SesionesRestantesDTO dto = clienteService.obtenerSesionesRestantes(
@@ -717,7 +713,7 @@ public class FlowService {
         }
     }
 
-    private FlowResult cancelarSesion(ChatConversationState estado) {
+    private FlowResult cancelarSesion(ChatConversationState estado, ConversationAiResult ai) {
         try {
             if (estado.getCliente() == null || estado.getCliente().getId() == null) {
                 estado.setEsperando("documento");
@@ -761,7 +757,7 @@ public class FlowService {
                     estado.setEsperando("tratamiento");
                     estado.setAccionPendiente("tratamiento");
                     chatContextService.guardarEstado(estado);
-                    return new FlowResult("No identifiqué el tratamiento. ¿Podés repetir el nombre?", false);
+                    return new FlowResult(ai.getRespuestaSugerida(), false);
                 }
 
                 List<SesionResponseDTO> sesiones = sesionService.findByClienteAndFecha(clienteId, estado.getFecha());
