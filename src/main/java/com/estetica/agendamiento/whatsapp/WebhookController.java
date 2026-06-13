@@ -22,9 +22,6 @@ public class WebhookController {
     @Autowired
     private WhatsappConversationService whatsappConversationService;
 
-    @Value("${whatsapp.conversation-v2.enabled:false}")
-    private boolean conversationV2Enabled;
-
     @Autowired
     private MetaMediaService metaMediaService;
 
@@ -57,8 +54,6 @@ public class WebhookController {
         try {
             System.out.println("📦 Payload recibido desde Meta:");
             System.out.println(payload);
-
-            System.out.println("🧪 conversationV2Enabled = " + conversationV2Enabled);
 
             // 1️⃣ Validar tipo de objeto
             if (!"whatsapp_business_account".equals(payload.get("object"))) {
@@ -104,14 +99,9 @@ public class WebhookController {
                 dto.setTelefono(telefono);
                 dto.setTexto(texto);
 
-                // if (conversationV2Enabled) {
                 System.out.println("✅ Usando Conversation V2");
                 FlowResult result = whatsappConversationService.procesarMensaje(dto);
                 metaMediaService.sendWhatsappMessage(telefono, result.getRespuesta());
-                // } else {
-                // System.out.println("⚠️ Usando NluOrchestrator viejo");
-                // orchestrator.processIncomingMessage(dto);
-                // }
 
                 return ResponseEntity.ok("EVENT_RECEIVED");
             }

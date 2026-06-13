@@ -526,4 +526,11 @@ public class SesionService {
                 return sesiones.stream().map(SesionResponseDTO::fromEntity)
                                 .collect(Collectors.toList());
         }
+
+        public Sesion obtenerUltimaSesionDelCliente(Long clienteId) {
+                return sesionRepository.findUltimasSesionesByClienteId(clienteId)
+                                .stream()
+                                .findFirst()
+                                .orElse(null);
+        }
 }

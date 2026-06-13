@@ -77,6 +77,7 @@ public class FlowService {
             case "consultar_tratamientos_disponibles" -> consultarTratamientosDisponibles(estado);
 
             case "abandonar_flujo" -> abandonarFlujo(estado);
+            case "referencia_contextual" -> manejarReferenciaContextualSinFlujo(estado, ai);
 
             case "saludo" -> responderGeneral(telefono, estado,
                     textoONulo(ai.getRespuestaSugerida(),
@@ -221,6 +222,18 @@ public class FlowService {
 
         if ("consultar_tratamientos_disponibles".equals(flujo)) {
             return consultarTratamientosDisponibles(estado);
+        }
+
+        if ("referencia_contextual".equals(normalizar(ai.getIntent()))) {
+
+            if ("consultar_sesiones_restantes".equals(flujo)
+                    && "tratamiento".equals(esperando)) {
+                return resolverReferenciaParaConsultaSesiones(estado, ai);
+            }
+
+            return new FlowResult(
+                    "Entiendo que te referís a algo anterior, pero necesito un dato más para ubicarlo correctamente.",
+                    false);
         }
 
         // Confirmación o negación
@@ -1134,6 +1147,46 @@ public class FlowService {
                     "No pude consultar tus tratamientos disponibles: " + e.getMessage(),
                     false);
         }
+    }
+
+    private FlowResult resolverReferenciaParaConsultaSesiones(
+            ChatConversationState estado,
+            ConversationAiResult ai) {
+        if (estado.getCliente() == null || estado.getCliente().getId() == null) {
+            estado.setEsperando("documento");
+            estado.setAccionPendiente("documento");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "Necesito identificarte antes de revisar tu última sesión. Decime tu número de documento, por favor.",
+                    false);
+        }
+
+        Sesion ultima = sesionService.obtenerUltimaSesionDelCliente(
+                estado.getCliente().getId());
+
+        if (ultima == null || ultima.getTratamiento() == null) {
+            estado.setEsperando("tratamiento");
+            estado.setAccionPendiente("tratamiento");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "No encontré sesiones anteriores para saber cuál fue tu último tratamiento. ¿Podés decirme el nombre del tratamiento?",
+                    false);
+        }
+
+        estado.setTratamiento(ultima.getTratamiento().getNombre());
+        chatContextService.guardarEstado(estado);
+
+        return consultarSesionesRestantes(estado, ai);
+    }
+
+    private FlowResult manejarReferenciaContextualSinFlujo(
+            ChatConversationState estado,
+            ConversationAiResult ai) {
+        return new FlowResult(
+                "Entiendo que te referís a algo anterior, pero necesito que me digas qué querés hacer: consultar sesiones, agendar o cancelar.",
+                false);
     }
 
 }

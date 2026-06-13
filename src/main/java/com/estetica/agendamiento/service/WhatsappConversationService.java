@@ -27,8 +27,6 @@ public class WhatsappConversationService {
         String texto = msg.getTexto();
 
         System.out.println("🟢 TEXTO WHATSAPP RAW = [" + texto + "]");
-        System.out.println("🟢 TEXTO LENGTH = " + (texto != null ? texto.length() : null));
-        System.out.println("🟢 TEXTO DIGITOS = [" + (texto != null ? texto.replaceAll("\\D", "") : null) + "]");
 
         ClienteResponseDTO cliente = identificarClientePorTelefono(telefono);
 

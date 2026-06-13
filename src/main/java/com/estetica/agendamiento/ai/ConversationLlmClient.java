@@ -225,7 +225,7 @@ public class ConversationLlmClient {
                         TRATAMIENTOS DE LA CLÍNICA VS TRATAMIENTOS DEL CLIENTE
                         ============================================================
 
-                        No confundas:
+                        No confundas (MUY IMPORTANTE):
 
                         A) Tratamientos ofrecidos por la clínica.
                         B) Tratamientos disponibles del cliente.
@@ -282,6 +282,14 @@ public class ConversationLlmClient {
                         consultar_sesiones_restantes
 
                         No debe interpretarse como agendar_sesion.
+
+                        ============================================================
+                        REFERENCIA CONTEXTUAL
+                        ============================================================
+                        Si el usuario responde con frases como "el último", "del último que me hice",
+                        "el anterior", "el de la otra vez", "el último tratamiento", la intención debe ser referencia_contextual.
+                        No inventes el tratamiento. El backend debe resolverlo consultando el historial.
+
 
                         ============================================================
                         REPROGRAMACIÓN
@@ -415,6 +423,7 @@ public class ConversationLlmClient {
                         - pregunta_recomendacion_estetica
                         - consulta_multiple
                         - abandonar_flujo
+                        - referencia_contextual
 
                         ============================================================
                         FORMATO OBLIGATORIO
