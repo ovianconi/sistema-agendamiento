@@ -375,10 +375,7 @@ public class FlowService {
 
         if ("pregunta_sobre_tratamientos".equals(intent)
                 || "pregunta_sobre_tratamientos".equals(tema)) {
-            String respuesta = textoONulo(ai.getRespuestaSugerida(),
-                    "Puedo darte una orientación general sobre tratamientos, pero la indicación correcta depende de una evaluación profesional. Si querés, puedo ayudarte a agendar una sesión.");
-
-            return new FlowResult(respuesta, false);
+            return responderTratamientosOfrecidos();
         }
 
         if ("pregunta_fuera_de_alcance".equals(intent)
@@ -1186,6 +1183,37 @@ public class FlowService {
             ConversationAiResult ai) {
         return new FlowResult(
                 "Entiendo que te referís a algo anterior, pero necesito que me digas qué querés hacer: consultar sesiones, agendar o cancelar.",
+                false);
+    }
+
+    private FlowResult responderTratamientosOfrecidos() {
+        List<String> nombres = tratamientoService.obtenerNombresTratamientos();
+
+        if (nombres == null || nombres.isEmpty()) {
+            return new FlowResult(
+                    "Por ahora no tengo tratamientos cargados para mostrar. Si querés, puedo ayudarte a agendar, cancelar o consultar sesiones.",
+                    false);
+        }
+
+        int limite = 8; // CANTIDAD de tratamientos a mostrar
+
+        String lista = nombres.stream()
+                .limit(limite)
+                .map(n -> "• " + n)
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        if (nombres.size() > limite) {
+            return new FlowResult(
+                    "Estos son algunos tratamientos que ofrecemos:\n"
+                            + lista
+                            + "\n\nTenemos otros tratamientos disponibles también. Si querés, podés preguntarme por uno en particular.",
+                    false);
+        }
+
+        return new FlowResult(
+                "Estos son los tratamientos que ofrecemos:\n"
+                        + lista
+                        + "\n\nSi querés, puedo ayudarte a agendar una sesión o consultar tus tratamientos disponibles.",
                 false);
     }
 

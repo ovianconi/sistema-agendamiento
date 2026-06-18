@@ -32,8 +32,10 @@ public class TratamientoService {
     }
 
     /**
-     * Devuelve el ID del tratamiento que mejor matchee con "nombre" (case-insensitive). Estrategia:
-     * - Exacto (ignore-case) - Empieza con ... - Contiene ... Si no encuentra nada, retorna null.
+     * Devuelve el ID del tratamiento que mejor matchee con "nombre"
+     * (case-insensitive). Estrategia:
+     * - Exacto (ignore-case) - Empieza con ... - Contiene ... Si no encuentra nada,
+     * retorna null.
      */
     public Long buscarIdPorNombre(String nombre) {
         if (nombre == null || nombre.isBlank()) {
@@ -46,5 +48,12 @@ public class TratamientoService {
                 .or(() -> tratamientoRepository.findFirstByNombreContainingIgnoreCase(nombre)
                         .map(Tratamiento::getId))
                 .orElse(null);
+    }
+
+    public List<String> obtenerNombresTratamientos() {
+        return tratamientoRepository.findAllByOrderByNombreAsc()
+                .stream()
+                .map(Tratamiento::getNombre)
+                .toList();
     }
 }
