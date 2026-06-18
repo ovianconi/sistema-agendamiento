@@ -375,7 +375,7 @@ public class FlowService {
 
         if ("pregunta_sobre_tratamientos".equals(intent)
                 || "pregunta_sobre_tratamientos".equals(tema)) {
-            return responderTratamientosOfrecidos();
+            return responderTratamientosOfrecidos(ai);
         }
 
         if ("pregunta_fuera_de_alcance".equals(intent)
@@ -1186,7 +1186,7 @@ public class FlowService {
                 false);
     }
 
-    private FlowResult responderTratamientosOfrecidos() {
+    private FlowResult responderTratamientosOfrecidos(ConversationAiResult ai) {
         List<String> nombres = tratamientoService.obtenerNombresTratamientos();
 
         if (nombres == null || nombres.isEmpty()) {
@@ -1203,18 +1203,28 @@ public class FlowService {
                 .collect(java.util.stream.Collectors.joining("\n"));
 
         if (nombres.size() > limite) {
-            return new FlowResult(
-                    "Estos son algunos tratamientos que ofrecemos:\n"
-                            + lista
-                            + "\n\nTenemos otros tratamientos disponibles también. Si querés, podés preguntarme por uno en particular.",
-                    false);
+            /*
+             * return new FlowResult(
+             * "Estos son algunos tratamientos que ofrecemos:\n"
+             * + lista
+             * +
+             * "\n\nTenemos otros tratamientos disponibles también. Si querés, podés preguntarme por uno en particular."
+             * ,
+             * false);
+             */
+            return new FlowResult(ai.getRespuestaSugerida(), false);
         }
 
-        return new FlowResult(
-                "Estos son los tratamientos que ofrecemos:\n"
-                        + lista
-                        + "\n\nSi querés, puedo ayudarte a agendar una sesión o consultar tus tratamientos disponibles.",
-                false);
+        /*
+         * return new FlowResult(
+         * "Estos son los tratamientos que ofrecemos:\n"
+         * + lista
+         * +
+         * "\n\nSi querés, puedo ayudarte a agendar una sesión o consultar tus tratamientos disponibles."
+         * ,
+         * false);
+         */
+        return new FlowResult(ai.getRespuestaSugerida(), false);
     }
 
 }

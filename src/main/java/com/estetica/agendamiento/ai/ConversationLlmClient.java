@@ -230,6 +230,8 @@ public class ConversationLlmClient {
                         A) Tratamientos ofrecidos por la clínica.
                         B) Tratamientos disponibles del cliente.
 
+                        Y siempre debés reconducir hacia las funciones del sistema.
+
                         ------------------------------------------------------------
                         CASO A - Información general
                         ------------------------------------------------------------
