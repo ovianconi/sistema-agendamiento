@@ -63,7 +63,7 @@ public class FlowService {
                 estado.limpiarFlujo();
                 chatContextService.guardarEstado(estado);
             } else {
-                return continuarFlujoActivo(telefono, estado, ai);
+                return continuarFlujoActivo(telefono, estado, ai, mensajeOriginal);
             }
         }
 
@@ -146,7 +146,9 @@ public class FlowService {
             estado.setAccionPendiente("tratamiento");
             estado.setLastBotQuestion("¿Qué tratamiento querés agendar?");
             chatContextService.guardarEstado(estado);
-            return new FlowResult(ai.getRespuestaSugerida(), false);
+            return new FlowResult(
+                    "¿Qué tratamiento querés agendar?",
+                    false);
         }
 
         if (estado.getFecha() == null && estado.getHora() == null) {
@@ -181,16 +183,47 @@ public class FlowService {
         chatContextService.guardarEstado(estado);
 
         return new FlowResult(
-                ai.getRespuestaSugerida(),
+                "Me confirmás, ¿querés agendar *"
+                        + estado.getTratamiento()
+                        + "* el *"
+                        + formatearFecha(estado.getFecha())
+                        + "* a las *"
+                        + formatearHora(estado.getHora())
+                        + "*?",
                 false);
     }
 
-    private FlowResult continuarFlujoActivo(String telefono, ChatConversationState estado, ConversationAiResult ai) {
+    private FlowResult continuarFlujoActivo(String telefono, ChatConversationState estado, ConversationAiResult ai,
+            String mensajeOriginal) {
         String flujo = normalizar(estado.getFlujoActivo());
         String esperando = normalizar(estado.getEsperando());
 
+        if ("pregunta_sobre_tratamientos".equals(normalizar(ai.getIntent()))
+                || "tratamientos de la clinica".equals(normalizar(ai.getTemaGeneral()))
+                || "tratamientos de la clínica".equals(normalizar(ai.getTemaGeneral()))) {
+
+            FlowResult info = responderTratamientosOfrecidos(ai);
+
+            if ("agendar_sesion".equals(flujo)
+                    && ("tratamiento".equals(esperando) || "fecha_hora".equals(esperando))) {
+
+                return new FlowResult(
+                        info.getRespuesta()
+                                + "\n\nSeguimos con tu agendamiento 😊. ¿Qué tratamiento querés agendar?",
+                        false);
+            }
+
+            return info;
+        }
+
         if (esInterrupcionConversacional(ai)) {
             return responderInterrupcionYRetomar(estado, ai);
+        }
+
+        if ("agendar_sesion".equals(flujo)
+                && ("corregir_dato".equals(normalizar(ai.getIntent()))
+                        || "reprogramar_sesion".equals(normalizar(ai.getIntent())))) {
+            return manejarCorreccionAgendamiento(estado, ai, mensajeOriginal);
         }
 
         if ("reprogramar_sesion".equals(flujo)) {
@@ -253,7 +286,9 @@ public class FlowService {
                 estado.setLastBotQuestion("¿Qué dato querés cambiar?");
                 chatContextService.guardarEstado(estado);
 
-                return new FlowResult(ai.getRespuestaSugerida(), false);
+                return new FlowResult(
+                        "Sin problema 😊. ¿Qué querés cambiar: tratamiento, fecha u hora?",
+                        false);
             }
         }
 
@@ -587,7 +622,11 @@ public class FlowService {
                 estado.setEsperando("tratamiento");
                 estado.setAccionPendiente("tratamiento");
                 chatContextService.guardarEstado(estado);
-                return new FlowResult(ai.getRespuestaSugerida(), false);
+                return new FlowResult(
+                        respuestaValidacionTratamiento(
+                                ai,
+                                estado.getTratamiento()),
+                        false);
             }
 
             SesionRequestDTO dto = new SesionRequestDTO();
@@ -676,7 +715,11 @@ public class FlowService {
                 estado.setAccionPendiente("tratamiento");
                 chatContextService.guardarEstado(estado);
 
-                return new FlowResult(ai.getRespuestaSugerida(), false);
+                return new FlowResult(
+                        respuestaValidacionTratamiento(
+                                ai,
+                                estado.getTratamiento()),
+                        false);
             }
 
             SesionesRestantesDTO dto = clienteService.obtenerSesionesRestantes(
@@ -767,7 +810,11 @@ public class FlowService {
                     estado.setEsperando("tratamiento");
                     estado.setAccionPendiente("tratamiento");
                     chatContextService.guardarEstado(estado);
-                    return new FlowResult(ai.getRespuestaSugerida(), false);
+                    return new FlowResult(
+                            respuestaValidacionTratamiento(
+                                    ai,
+                                    estado.getTratamiento()),
+                            false);
                 }
 
                 List<SesionResponseDTO> sesiones = sesionService.findByClienteAndFecha(clienteId, estado.getFecha());
@@ -908,8 +955,9 @@ public class FlowService {
             respuestaInterrupcion = "Puedo orientarte de forma general 😊, pero una recomendación estética adecuada debe hacerla un profesional de la clínica.";
         } else if ("pregunta_sobre_tratamientos".equals(intent)
                 || "pregunta_sobre_tratamientos".equals(tema)) {
-            respuestaInterrupcion = textoONulo(ai.getRespuestaSugerida(),
-                    "Puedo darte una orientación general sobre tratamientos, pero la indicación correcta depende de una evaluación profesional.");
+
+            FlowResult info = responderTratamientosOfrecidos(ai);
+            respuestaInterrupcion = info.getRespuesta();
         } else if ("pregunta_fuera_de_alcance".equals(intent)
                 || "pregunta_fuera_de_alcance".equals(tema)) {
             respuestaInterrupcion = "No tengo información en tiempo real sobre eso 😊.";
@@ -1203,28 +1251,107 @@ public class FlowService {
                 .collect(java.util.stream.Collectors.joining("\n"));
 
         if (nombres.size() > limite) {
-            /*
-             * return new FlowResult(
-             * "Estos son algunos tratamientos que ofrecemos:\n"
-             * + lista
-             * +
-             * "\n\nTenemos otros tratamientos disponibles también. Si querés, podés preguntarme por uno en particular."
-             * ,
-             * false);
-             */
-            return new FlowResult(ai.getRespuestaSugerida(), false);
+            return new FlowResult(
+                    "Estos son algunos tratamientos que ofrecemos:\n"
+                            + lista
+                            +
+                            "\n\nTenemos otros tratamientos disponibles también. Si querés, puedo ayudarte a agendar una sesión o consultar tus tratamientos disponibles.",
+                    false);
+
+            // return new FlowResult(ai.getRespuestaSugerida(), false);
         }
 
-        /*
-         * return new FlowResult(
-         * "Estos son los tratamientos que ofrecemos:\n"
-         * + lista
-         * +
-         * "\n\nSi querés, puedo ayudarte a agendar una sesión o consultar tus tratamientos disponibles."
-         * ,
-         * false);
-         */
-        return new FlowResult(ai.getRespuestaSugerida(), false);
+        return new FlowResult(
+                "Estos son los tratamientos que ofrecemos:\n"
+                        + lista
+                        +
+                        "\n\nSi querés, puedo ayudarte a agendar una sesión o consultar tus tratamientos disponibles.",
+                false);
+
+        // return new FlowResult(ai.getRespuestaSugerida(), false);
+    }
+
+    private String respuestaValidacionTratamiento(
+            ConversationAiResult ai,
+            String tratamiento) {
+
+        String sugerida = ai != null ? ai.getRespuestaSugerida() : null;
+
+        if (sugerida != null
+                && sugerida.toLowerCase().contains("no encontr")
+                && sugerida.toLowerCase().contains("tratamiento")) {
+            return sugerida;
+        }
+
+        return "No identifiqué el tratamiento *" + tratamiento
+                + "*. ¿Podés repetir el nombre?";
+    }
+
+    private FlowResult manejarCorreccionAgendamiento(
+            ChatConversationState estado,
+            ConversationAiResult ai,
+            String mensajeOriginal) {
+
+        String msg = normalizar(mensajeOriginal);
+        String campo = normalizar(ai.getCampoACorregir());
+
+        if (msg.contains("tratamiento")) {
+            campo = "tratamiento";
+        } else if (msg.contains("fecha") && msg.contains("hora")) {
+            campo = "fecha_hora";
+        } else if (msg.contains("fecha") || msg.contains("dia") || msg.contains("día")) {
+            campo = "fecha";
+        } else if (msg.contains("hora")) {
+            campo = "hora";
+        } else if (estaVacio(campo)
+                && "reprogramar_sesion".equals(normalizar(ai.getIntent()))) {
+            campo = "fecha_hora";
+        }
+
+        estado.setEsperandoConfirmacion(false);
+
+        if (campo.contains("tratamiento")) {
+            estado.setTratamiento(null);
+            estado.setEsperando("tratamiento");
+            estado.setAccionPendiente("tratamiento");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult("Claro, ¿qué tratamiento querés agendar?", false);
+        }
+
+        if (campo.contains("fecha") && campo.contains("hora")) {
+            estado.setFecha(null);
+            estado.setHora(null);
+            estado.setEsperando("fecha_hora");
+            estado.setAccionPendiente("fecha_hora");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult("Claro, ¿para qué nueva fecha y hora querés agendar?", false);
+        }
+
+        if (campo.contains("fecha")) {
+            estado.setFecha(null);
+            estado.setEsperando("fecha");
+            estado.setAccionPendiente("fecha");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult("Claro, ¿para qué nueva fecha querés agendar?", false);
+        }
+
+        if (campo.contains("hora")) {
+            estado.setHora(null);
+            estado.setEsperando("hora");
+            estado.setAccionPendiente("hora");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult("Claro, ¿a qué nueva hora querés agendar?", false);
+        }
+
+        estado.setEsperando("campo_a_corregir");
+        estado.setAccionPendiente("campo_a_corregir");
+        chatContextService.guardarEstado(estado);
+
+        return new FlowResult("Claro, ¿qué querés cambiar: tratamiento, fecha u hora?", false);
     }
 
 }
