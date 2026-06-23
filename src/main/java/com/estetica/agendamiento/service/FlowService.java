@@ -403,13 +403,25 @@ public class FlowService {
 
         if ("pregunta_recomendacion_estetica".equals(intent)
                 || "pregunta_recomendacion_estetica".equals(tema)) {
-            String respuestaIA = textoONulo(ai.getRespuestaSugerida(), "");
 
-            return new FlowResult(respuestaIA, false);
+            if (!estaVacio(ai.getTratamiento())) {
+                return responderInfoTratamientoEspecifico(ai);
+            }
+
+            return new FlowResult(
+                    textoONulo(ai.getRespuestaSugerida(),
+                            "La recomendación definitiva debe realizarla un profesional de la clínica luego de una evaluación."),
+                    false);
         }
 
         if ("pregunta_sobre_tratamientos".equals(intent)
-                || "pregunta_sobre_tratamientos".equals(tema)) {
+                || "pregunta_sobre_tratamientos".equals(tema)
+                || tema.contains("informacion general sobre")) {
+
+            if (!estaVacio(ai.getTratamiento())) {
+                return responderInfoTratamientoEspecifico(ai);
+            }
+
             return responderTratamientosOfrecidos(ai);
         }
 
@@ -1352,6 +1364,22 @@ public class FlowService {
         chatContextService.guardarEstado(estado);
 
         return new FlowResult("Claro, ¿qué querés cambiar: tratamiento, fecha u hora?", false);
+    }
+
+    private FlowResult responderInfoTratamientoEspecifico(ConversationAiResult ai) {
+        Long tratamientoId = tratamientoService.buscarIdPorNombre(ai.getTratamiento());
+
+        if (tratamientoId == null) {
+            return new FlowResult(
+                    "No encontré ese tratamiento en la lista de la clínica. ¿Querés que te muestre los tratamientos disponibles?",
+                    false);
+        }
+
+        return new FlowResult(
+                textoONulo(ai.getRespuestaSugerida(),
+                        "Puedo darte una orientación general sobre " + ai.getTratamiento()
+                                + ". La recomendación definitiva debe realizarla un profesional de la clínica."),
+                false);
     }
 
 }
