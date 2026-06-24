@@ -56,4 +56,10 @@ public class TratamientoService {
                 .map(Tratamiento::getNombre)
                 .toList();
     }
+
+    public String buscarNombrePorId(Long id) {
+        return tratamientoRepository.findById(id)
+                .map(Tratamiento::getNombre)
+                .orElse("la sesión");
+    }
 }

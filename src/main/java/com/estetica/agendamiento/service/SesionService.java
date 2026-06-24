@@ -533,4 +533,11 @@ public class SesionService {
                                 .findFirst()
                                 .orElse(null);
         }
+
+        public Sesion obtenerUltimaSesionPendienteDelCliente(Long clienteId) {
+                return sesionRepository.findUltimasSesionesPendientesByClienteId(clienteId)
+                                .stream()
+                                .findFirst()
+                                .orElse(null);
+        }
 }

@@ -264,6 +264,15 @@ public class FlowService {
                 return resolverReferenciaParaConsultaSesiones(estado, ai);
             }
 
+            if ("agendar_sesion".equals(flujo)
+                    && "tratamiento".equals(esperando)) {
+                return resolverReferenciaParaAgendamiento(telefono, estado, ai);
+            }
+
+            if ("cancelar_sesion".equals(flujo)) {
+                return resolverReferenciaParaCancelacion(estado, ai);
+            }
+
             return new FlowResult(
                     "Entiendo que te referís a algo anterior, pero necesito un dato más para ubicarlo correctamente.",
                     false);
@@ -275,20 +284,40 @@ public class FlowService {
                 if ("agendar_sesion".equals(normalizar(estado.getFlujoActivo()))) {
                     return confirmarAgendamiento(telefono, estado, ai);
                 }
+                if ("cancelar_sesion".equals(normalizar(estado.getFlujoActivo()))) {
+                    return cancelarSesion(estado, ai);
+                }
 
                 return new FlowResult("Confirmado.", false);
             }
 
             if (Boolean.FALSE.equals(ai.getConfirmacion()) || "negar".equals(normalizar(ai.getIntent()))) {
-                estado.setEsperando("campo_a_corregir");
-                estado.setAccionPendiente("campo_a_corregir");
-                estado.setEsperandoConfirmacion(false);
-                estado.setLastBotQuestion("¿Qué dato querés cambiar?");
+
+                if ("cancelar_sesion".equals(normalizar(estado.getFlujoActivo()))) {
+                    estado.limpiarFlujo();
+                    chatContextService.guardarEstado(estado);
+
+                    return new FlowResult(
+                            "Sin problema 😊. No cancelé la sesión.",
+                            true);
+                }
+
+                if ("agendar_sesion".equals(normalizar(estado.getFlujoActivo()))) {
+                    estado.setEsperando("campo_a_corregir");
+                    estado.setAccionPendiente("campo_a_corregir");
+                    estado.setEsperandoConfirmacion(false);
+                    estado.setLastBotQuestion("¿Qué dato querés cambiar?");
+                    chatContextService.guardarEstado(estado);
+
+                    return new FlowResult(
+                            "Sin problema 😊. ¿Qué querés cambiar: tratamiento, fecha u hora?",
+                            false);
+                }
+
+                estado.limpiarFlujo();
                 chatContextService.guardarEstado(estado);
 
-                return new FlowResult(
-                        "Sin problema 😊. ¿Qué querés cambiar: tratamiento, fecha u hora?",
-                        false);
+                return new FlowResult("Entendido 😊.", true);
             }
         }
 
@@ -797,6 +826,20 @@ public class FlowService {
             }
 
             if (estado.getHora() != null) {
+
+                if (!"confirmacion".equals(normalizar(estado.getEsperando()))) {
+                    estado.setEsperando("confirmacion");
+                    estado.setAccionPendiente("confirmacion");
+                    estado.setEsperandoConfirmacion(true);
+                    chatContextService.guardarEstado(estado);
+
+                    return new FlowResult(
+                            "Encontré tu sesión del *" + formatearFecha(estado.getFecha())
+                                    + "* a las *" + formatearHora(estado.getHora())
+                                    + "*. ¿Querés cancelarla?",
+                            false);
+                }
+
                 Sesion sesion = sesionService.cancelarSesionPorFechaHora(
                         clienteId,
                         estado.getFecha(),
@@ -862,6 +905,23 @@ public class FlowService {
                 }
 
                 SesionResponseDTO s = coincidencias.get(0);
+
+                if (!"confirmacion".equals(normalizar(estado.getEsperando()))) {
+                    estado.setFecha(s.getFecha());
+                    estado.setHora(s.getHoraInicio());
+                    estado.setEsperando("confirmacion");
+                    estado.setAccionPendiente("confirmacion");
+                    estado.setEsperandoConfirmacion(true);
+                    chatContextService.guardarEstado(estado);
+
+                    return new FlowResult(
+                            "Encontré tu sesión de *" + estado.getTratamiento()
+                                    + "* el *" + formatearFecha(s.getFecha())
+                                    + "* a las *" + formatearHora(s.getHoraInicio())
+                                    + "*. ¿Querés cancelarla?",
+                            false);
+                }
+
                 Sesion sesion = sesionService.cancelarSesion(s.getId());
 
                 String tratamiento = sesion.getTratamiento().getNombre();
@@ -887,6 +947,24 @@ public class FlowService {
 
             if (sesiones.size() == 1) {
                 SesionResponseDTO s = sesiones.get(0);
+
+                if (!"confirmacion".equals(normalizar(estado.getEsperando()))) {
+                    String nombreTratamiento = tratamientoService.buscarNombrePorId(s.getTratamientoId());
+
+                    estado.setTratamiento(nombreTratamiento);
+                    estado.setHora(s.getHoraInicio());
+                    estado.setEsperando("confirmacion");
+                    estado.setAccionPendiente("confirmacion");
+                    estado.setEsperandoConfirmacion(true);
+                    chatContextService.guardarEstado(estado);
+
+                    return new FlowResult(
+                            "Encontré tu sesión de *" + nombreTratamiento
+                                    + "* el *" + formatearFecha(s.getFecha())
+                                    + "* a las *" + formatearHora(s.getHoraInicio())
+                                    + "*. ¿Querés cancelarla?",
+                            false);
+                }
 
                 Sesion sesion = sesionService.cancelarSesion(s.getId());
 
@@ -1379,6 +1457,91 @@ public class FlowService {
                 textoONulo(ai.getRespuestaSugerida(),
                         "Puedo darte una orientación general sobre " + ai.getTratamiento()
                                 + ". La recomendación definitiva debe realizarla un profesional de la clínica."),
+                false);
+    }
+
+    private FlowResult resolverReferenciaParaAgendamiento(
+            String telefono,
+            ChatConversationState estado,
+            ConversationAiResult ai) {
+
+        if (estado.getCliente() == null || estado.getCliente().getId() == null) {
+            estado.setEsperando("documento");
+            estado.setAccionPendiente("documento");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "Necesito identificarte antes de revisar tu último tratamiento. Decime tu número de documento, por favor.",
+                    false);
+        }
+
+        Sesion ultima = sesionService.obtenerUltimaSesionDelCliente(
+                estado.getCliente().getId());
+
+        if (ultima == null || ultima.getTratamiento() == null) {
+            estado.setEsperando("tratamiento");
+            estado.setAccionPendiente("tratamiento");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "No encontré sesiones anteriores para saber cuál fue tu último tratamiento. ¿Podés decirme el nombre del tratamiento?",
+                    false);
+        }
+
+        estado.setTratamiento(ultima.getTratamiento().getNombre());
+        estado.setEsperando("fecha_hora");
+        estado.setAccionPendiente("fecha_hora");
+        estado.setLastBotQuestion("¿Para qué fecha y hora querés agendar?");
+        chatContextService.guardarEstado(estado);
+
+        return new FlowResult(
+                "Entendí que querés agendar *" + ultima.getTratamiento().getNombre()
+                        + "*. ¿Para qué fecha y hora querés agendar?",
+                false);
+    }
+
+    private FlowResult resolverReferenciaParaCancelacion(
+            ChatConversationState estado,
+            ConversationAiResult ai) {
+
+        if (estado.getCliente() == null || estado.getCliente().getId() == null) {
+            estado.setEsperando("documento");
+            estado.setAccionPendiente("documento");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "Necesito identificarte antes de revisar tus sesiones agendadas. Decime tu número de documento, por favor.",
+                    false);
+        }
+
+        Sesion ultima = sesionService.obtenerUltimaSesionPendienteDelCliente(
+                estado.getCliente().getId());
+
+        if (ultima == null) {
+            estado.limpiarFlujo();
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "No encontré sesiones pendientes para cancelar.",
+                    true);
+        }
+
+        estado.setTratamiento(ultima.getTratamiento().getNombre());
+        estado.setFecha(ultima.getFecha());
+        estado.setHora(ultima.getHoraInicio());
+        estado.setEsperando("confirmacion");
+        estado.setAccionPendiente("confirmacion");
+        estado.setEsperandoConfirmacion(true);
+        chatContextService.guardarEstado(estado);
+
+        return new FlowResult(
+                "Encontré tu última sesión pendiente: *"
+                        + ultima.getTratamiento().getNombre()
+                        + "* el *"
+                        + formatearFecha(ultima.getFecha())
+                        + "* a las *"
+                        + formatearHora(ultima.getHoraInicio())
+                        + "*. ¿Querés cancelarla?",
                 false);
     }
 
