@@ -261,12 +261,12 @@ public class FlowService {
 
             if ("consultar_sesiones_restantes".equals(flujo)
                     && "tratamiento".equals(esperando)) {
-                return resolverReferenciaParaConsultaSesiones(estado, ai);
+                return resolverReferenciaParaConsultaSesiones(estado, ai, mensajeOriginal);
             }
 
             if ("agendar_sesion".equals(flujo)
                     && "tratamiento".equals(esperando)) {
-                return resolverReferenciaParaAgendamiento(telefono, estado, ai);
+                return resolverReferenciaParaAgendamiento(telefono, estado, ai, mensajeOriginal);
             }
 
             if ("cancelar_sesion".equals(flujo)) {
@@ -1284,38 +1284,6 @@ public class FlowService {
         }
     }
 
-    private FlowResult resolverReferenciaParaConsultaSesiones(
-            ChatConversationState estado,
-            ConversationAiResult ai) {
-        if (estado.getCliente() == null || estado.getCliente().getId() == null) {
-            estado.setEsperando("documento");
-            estado.setAccionPendiente("documento");
-            chatContextService.guardarEstado(estado);
-
-            return new FlowResult(
-                    "Necesito identificarte antes de revisar tu última sesión. Decime tu número de documento, por favor.",
-                    false);
-        }
-
-        Sesion ultima = sesionService.obtenerUltimaSesionDelCliente(
-                estado.getCliente().getId());
-
-        if (ultima == null || ultima.getTratamiento() == null) {
-            estado.setEsperando("tratamiento");
-            estado.setAccionPendiente("tratamiento");
-            chatContextService.guardarEstado(estado);
-
-            return new FlowResult(
-                    "No encontré sesiones anteriores para saber cuál fue tu último tratamiento. ¿Podés decirme el nombre del tratamiento?",
-                    false);
-        }
-
-        estado.setTratamiento(ultima.getTratamiento().getNombre());
-        chatContextService.guardarEstado(estado);
-
-        return consultarSesionesRestantes(estado, ai);
-    }
-
     private FlowResult manejarReferenciaContextualSinFlujo(
             ChatConversationState estado,
             ConversationAiResult ai) {
@@ -1463,7 +1431,8 @@ public class FlowService {
     private FlowResult resolverReferenciaParaAgendamiento(
             String telefono,
             ChatConversationState estado,
-            ConversationAiResult ai) {
+            ConversationAiResult ai,
+            String mensajeOriginal) {
 
         if (estado.getCliente() == null || estado.getCliente().getId() == null) {
             estado.setEsperando("documento");
@@ -1475,8 +1444,24 @@ public class FlowService {
                     false);
         }
 
-        Sesion ultima = sesionService.obtenerUltimaSesionDelCliente(
-                estado.getCliente().getId());
+        Sesion ultima;
+
+        if (referenciaAPendiente(mensajeOriginal, ai)) {
+
+            ultima = sesionService.obtenerUltimaSesionPendienteDelCliente(
+                    estado.getCliente().getId());
+
+        } else if (referenciaAUsada(mensajeOriginal, ai)) {
+
+            ultima = sesionService.obtenerUltimaSesionDelCliente(
+                    estado.getCliente().getId());
+
+        } else {
+
+            return new FlowResult(
+                    "¿Te referís a la última sesión que realizaste o a la última que agendaste?",
+                    false);
+        }
 
         if (ultima == null || ultima.getTratamiento() == null) {
             estado.setEsperando("tratamiento");
@@ -1498,6 +1483,55 @@ public class FlowService {
                 "Entendí que querés agendar *" + ultima.getTratamiento().getNombre()
                         + "*. ¿Para qué fecha y hora querés agendar?",
                 false);
+    }
+
+    private FlowResult resolverReferenciaParaConsultaSesiones(
+            ChatConversationState estado,
+            ConversationAiResult ai,
+            String mensajeOriginal) {
+        if (estado.getCliente() == null || estado.getCliente().getId() == null) {
+            estado.setEsperando("documento");
+            estado.setAccionPendiente("documento");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "Necesito identificarte antes de revisar tu última sesión. Decime tu número de documento, por favor.",
+                    false);
+        }
+
+        Sesion ultima;
+
+        if (referenciaAPendiente(mensajeOriginal, ai)) {
+
+            ultima = sesionService.obtenerUltimaSesionPendienteDelCliente(
+                    estado.getCliente().getId());
+
+        } else if (referenciaAUsada(mensajeOriginal, ai)) {
+
+            ultima = sesionService.obtenerUltimaSesionDelCliente(
+                    estado.getCliente().getId());
+
+        } else {
+
+            return new FlowResult(
+                    "¿Te referís a la última sesión que realizaste o a la última que agendaste?",
+                    false);
+        }
+
+        if (ultima == null || ultima.getTratamiento() == null) {
+            estado.setEsperando("tratamiento");
+            estado.setAccionPendiente("tratamiento");
+            chatContextService.guardarEstado(estado);
+
+            return new FlowResult(
+                    "No encontré sesiones anteriores para saber cuál fue tu último tratamiento. ¿Podés decirme el nombre del tratamiento?",
+                    false);
+        }
+
+        estado.setTratamiento(ultima.getTratamiento().getNombre());
+        chatContextService.guardarEstado(estado);
+
+        return consultarSesionesRestantes(estado, ai);
     }
 
     private FlowResult resolverReferenciaParaCancelacion(
@@ -1543,6 +1577,32 @@ public class FlowService {
                         + formatearHora(ultima.getHoraInicio())
                         + "*. ¿Querés cancelarla?",
                 false);
+    }
+
+    private boolean referenciaAPendiente(String texto, ConversationAiResult ai) {
+        String msg = normalizar(texto);
+        String tema = normalizar(ai != null ? ai.getTemaGeneral() : "");
+
+        return msg.contains("agende")
+                || msg.contains("agendé")
+                || msg.contains("turno")
+                || msg.contains("cita")
+                || msg.contains("pendiente")
+                || tema.contains("agendada")
+                || tema.contains("pendiente");
+    }
+
+    private boolean referenciaAUsada(String texto, ConversationAiResult ai) {
+        String msg = normalizar(texto);
+        String tema = normalizar(ai != null ? ai.getTemaGeneral() : "");
+
+        return msg.contains("hice")
+                || msg.contains("realice")
+                || msg.contains("realicé")
+                || msg.contains("me hicieron")
+                || msg.contains("usada")
+                || tema.contains("realizada")
+                || tema.contains("usada");
     }
 
 }
