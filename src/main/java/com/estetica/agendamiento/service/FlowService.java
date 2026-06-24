@@ -397,7 +397,7 @@ public class FlowService {
         String intent = normalizar(ai.getIntent());
         String tema = normalizar(textoONulo(ai.getTemaGeneral(), intent));
 
-        estado.setTemaGeneral(textoONulo(ai.getTemaGeneral(), ai.getIntent()));
+        estado.setTemaGeneral("conversacion_general");
         estado.setLastBotQuestion(null);
         chatContextService.guardarEstado(estado);
 
