@@ -299,6 +299,28 @@ public class ConversationLlmClient {
                         "el anterior", "el de la otra vez", "el último tratamiento", la intención debe ser referencia_contextual.
                         No inventes el tratamiento. El backend debe resolverlo consultando el historial.
 
+                        Si el usuario hace referencia a una sesión anterior o futura, completá:
+
+                        "tipoReferencia": ""
+
+                        tipoReferencia debe ser:
+
+                        - ultima_usada: si dice “la última que me hice”, “la última realizada”
+                        - ultima_agendada: si dice “la última que agendé”, “mi último turno”, “mi última cita”
+                        - proxima: si dice “mi próxima”, “la siguiente”, “la más cercana”
+                        - ambigua: si dice solo “mi última”, “la última”, “esa última” sin aclarar
+                        - ninguna: si no hay referencia contextual
+
+                        IMPORTANTE:
+
+                        Siempre devolvé el campo "tipoReferencia".
+
+                        Si la intención NO es referencia_contextual,
+                        debe valer:
+
+                        "tipoReferencia":"ninguna"
+
+                        Nunca omitas este campo.
 
                         ============================================================
                         REPROGRAMACIÓN
@@ -461,17 +483,18 @@ public class ConversationLlmClient {
                         ============================================================
 
                         {
-                          "intent": "",
-                          "flujoActivo": "",
-                          "esperando": "",
-                          "tratamiento": "",
-                          "fecha": "",
-                          "hora": "",
-                          "confirmacion": null,
-                          "campoACorregir": "",
-                          "temaGeneral": "",
-                          "respuestaSugerida": "",
-                          "cambiarFlujo": false
+                        "intent": "",
+                        "flujoActivo": "",
+                        "esperando": "",
+                        "tratamiento": "",
+                        "fecha": "",
+                        "hora": "",
+                        "tipoReferencia": "",
+                        "confirmacion": null,
+                        "campoACorregir": "",
+                        "temaGeneral": "",
+                        "respuestaSugerida": "",
+                        "cambiarFlujo": false
                         }
                         """;
     }

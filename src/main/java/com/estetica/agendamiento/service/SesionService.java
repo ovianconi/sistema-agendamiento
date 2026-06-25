@@ -527,7 +527,7 @@ public class SesionService {
                                 .collect(Collectors.toList());
         }
 
-        public Sesion obtenerUltimaSesionDelCliente(Long clienteId) {
+        public Sesion obtenerUltimaSesionUsadaDelCliente(Long clienteId) {
                 return sesionRepository.findUltimasSesionesByClienteId(clienteId)
                                 .stream()
                                 .findFirst()
@@ -536,6 +536,15 @@ public class SesionService {
 
         public Sesion obtenerUltimaSesionPendienteDelCliente(Long clienteId) {
                 return sesionRepository.findUltimasSesionesPendientesByClienteId(clienteId)
+                                .stream()
+                                .findFirst()
+                                .orElse(null);
+        }
+
+        public Sesion obtenerSesionProximaDelCliente(Long clienteId) {
+                return sesionRepository.findSesionProximaPendientesByClienteId(
+                                clienteId,
+                                LocalDate.now())
                                 .stream()
                                 .findFirst()
                                 .orElse(null);

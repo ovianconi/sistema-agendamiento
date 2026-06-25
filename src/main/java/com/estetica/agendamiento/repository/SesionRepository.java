@@ -122,7 +122,20 @@ public interface SesionRepository extends JpaRepository<Sesion, Long> {
                 JOIN s.clientePaquete cp
                 WHERE cp.cliente.id = :clienteId
                   AND s.estado = 'PENDIENTE'
-                ORDER BY s.fecha DESC, s.horaInicio DESC
+                ORDER BY s.id DESC
             """)
     List<Sesion> findUltimasSesionesPendientesByClienteId(@Param("clienteId") Long clienteId);
+
+    @Query("""
+                SELECT s
+                FROM Sesion s
+                JOIN s.clientePaquete cp
+                WHERE cp.cliente.id = :clienteId
+                  AND s.estado = 'PENDIENTE'
+                  AND s.fecha >= :hoy
+                ORDER BY s.fecha ASC, s.horaInicio ASC
+            """)
+    List<Sesion> findSesionProximaPendientesByClienteId(
+            @Param("clienteId") Long clienteId,
+            @Param("hoy") LocalDate hoy);
 }

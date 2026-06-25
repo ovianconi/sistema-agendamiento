@@ -20,4 +20,6 @@ public class ConversationAiResult {
     private String respuestaSugerida;
 
     private boolean cambiarFlujo;
+
+    private String tipoReferencia;
 }
