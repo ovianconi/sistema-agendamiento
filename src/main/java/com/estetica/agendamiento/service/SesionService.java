@@ -549,4 +549,8 @@ public class SesionService {
                                 .findFirst()
                                 .orElse(null);
         }
+
+        public List<Sesion> obtenerSesionesPendientesDelCliente(Long clienteId) {
+                return sesionRepository.findSesionesPendientesByClienteId(clienteId, LocalDate.now());
+        }
 }

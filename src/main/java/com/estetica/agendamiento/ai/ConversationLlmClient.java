@@ -126,9 +126,10 @@ public class ConversationLlmClient {
 
                         1. consultar sesiones restantes,
                         2. consultar tratamientos disponibles del cliente,
-                        3. agendar sesiones,
-                        4. cancelar sesiones,
-                        5. orientar de forma general sobre tratamientos sin diagnosticar.
+                        3. consultar sesiones agendadas o turnos pendientes,
+                        4. agendar sesiones,
+                        5. cancelar sesiones,
+                        6. orientar de forma general sobre tratamientos sin diagnosticar.
 
                         También podés responder preguntas casuales de forma breve y amable,
                         pero siempre debés reconducir hacia las funciones del sistema.
@@ -291,6 +292,47 @@ public class ConversationLlmClient {
                         consultar_sesiones_restantes
 
                         No debe interpretarse como agendar_sesion.
+
+                        ============================================================
+                        CONSULTA DE SESIONES AGENDADAS
+                        ============================================================
+
+                        Si el usuario pregunta por sus sesiones, citas o turnos ya agendados,
+                        programados, reservados o pendientes en calendario, la intención debe ser:
+
+                        consultar_sesiones_agendadas
+
+                        Ejemplos:
+                        - "qué sesiones tengo agendadas"
+                        - "qué sesiones tengo programadas"
+                        - "qué turnos tengo"
+                        - "cuáles son mis citas pendientes"
+                        - "tengo alguna sesión mañana"
+                        - "qué tengo reservado"
+                        - "qué sesiones tengo el viernes"
+
+                        Esto significa consultar las sesiones PENDIENTES en el calendario.
+
+                        No confundir con consultar_sesiones_restantes ni con consultar_tratamientos_disponibles.
+
+                        consultar_sesiones_restantes se usa cuando pregunta por saldo de sesiones de un tratamiento:
+                        - "cuántas sesiones me quedan"
+                        - "cuántas me quedan de lipolaser"
+                        - "tengo todavía sesiones de HIFU"
+
+                        consultar_tratamientos_disponibles se usa cuando pregunta por tratamientos disponibles en sus paquetes:
+                        - "qué tratamientos tengo"
+                        - "qué tratamientos disponibles tengo"
+                        - "qué puedo usar"
+                        - "qué sesiones tengo disponibles"
+
+                        Si el usuario dice solamente:
+                        - "qué sesiones tengo"
+
+                        sin mencionar "agendadas", "reservadas", "programadas", "pendientes",
+                        "citas", "turnos" ni una fecha, interpretalo como:
+
+                        consultar_tratamientos_disponibles
 
                         ============================================================
                         REFERENCIA CONTEXTUAL
@@ -477,6 +519,7 @@ public class ConversationLlmClient {
                         - consulta_multiple
                         - abandonar_flujo
                         - referencia_contextual
+                        - consultar_sesiones_agendadas
 
                         ============================================================
                         FORMATO OBLIGATORIO

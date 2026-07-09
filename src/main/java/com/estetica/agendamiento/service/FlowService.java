@@ -77,6 +77,7 @@ public class FlowService {
         return switch (intent) {
             case "agendar_sesion" -> iniciarAgendamiento(telefono, estado, ai);
             case "consultar_sesiones_restantes" -> iniciarConsultaSesiones(telefono, estado, ai);
+            case "consultar_sesiones_agendadas" -> consultarSesionesAgendadas(estado);
             case "cancelar_sesion" -> iniciarCancelacion(telefono, estado, ai);
             case "reprogramar_sesion" -> iniciarReprogramacion(telefono, estado, ai);
             case "consultar_tratamientos_disponibles" -> consultarTratamientosDisponibles(estado);
@@ -274,6 +275,10 @@ public class FlowService {
 
         if ("consultar_tratamientos_disponibles".equals(flujo)) {
             return consultarTratamientosDisponibles(estado);
+        }
+
+        if ("consultar_sesiones_agendadas".equals(flujo)) {
+            return consultarSesionesAgendadas(estado);
         }
 
         if ("tipo_referencia".equals(esperando)) {
@@ -1737,6 +1742,49 @@ public class FlowService {
             default ->
                 null;
         };
+    }
+
+    private FlowResult consultarSesionesAgendadas(ChatConversationState estado) {
+        try {
+            if (estado.getCliente() == null || estado.getCliente().getId() == null) {
+                estado.setFlujoActivo("consultar_sesiones_agendadas");
+                estado.setIntent("consultar_sesiones_agendadas");
+                estado.setEsperando("documento");
+                estado.setAccionPendiente("documento");
+                chatContextService.guardarEstado(estado);
+
+                return new FlowResult(
+                        "Necesito identificarte antes de consultar tus sesiones agendadas. ¿Podés decirme tu documento?",
+                        false);
+            }
+
+            List<Sesion> sesiones = sesionService.obtenerSesionesPendientesDelCliente(
+                    estado.getCliente().getId());
+
+            estado.limpiarFlujo();
+            chatContextService.guardarEstado(estado);
+
+            if (sesiones == null || sesiones.isEmpty()) {
+                return new FlowResult(
+                        "No encontré sesiones agendadas pendientes para tu cuenta.",
+                        true);
+            }
+
+            String lista = sesiones.stream()
+                    .map(s -> "• " + s.getTratamiento().getNombre()
+                            + " - " + formatearFecha(s.getFecha())
+                            + " a las " + formatearHora(s.getHoraInicio()))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+
+            return new FlowResult(
+                    "Tenés estas sesiones agendadas:\n" + lista,
+                    true);
+
+        } catch (Exception e) {
+            return new FlowResult(
+                    "No pude consultar tus sesiones agendadas: " + e.getMessage(),
+                    false);
+        }
     }
 
 }
